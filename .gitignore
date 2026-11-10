@@ -43,3 +43,15 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# 8. LaTeX Residuals & TeX Source
+*.aux
+*.out
+*.toc
+*.log
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.tex
+report/*.tex
+report/README.txt
