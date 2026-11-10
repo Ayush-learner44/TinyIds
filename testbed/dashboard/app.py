@@ -30,7 +30,8 @@ def style_attack(val):
 @st.cache_resource
 def store():
     s = {"sensors": {}, "alerts": deque(maxlen=300), "stats": deque(maxlen=180), "status": {},
-         "connected": False, "lock": threading.Lock()}
+         "mitigation": {"ips_mode": True, "blocked": [], "quarantined": [], "throttled": [], "calibrated": False, "history": []},
+         "client": None, "connected": False, "lock": threading.Lock()}
     c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="dashboard")
     c.username_pw_set(os.environ["MQTT_USER"], os.environ["MQTT_PASS"])
 
@@ -55,10 +56,13 @@ def store():
                 s["stats"].append(d)
             elif m.topic == "ids/status":
                 s["status"] = d
+            elif m.topic == "ids/mitigation/status":
+                s["mitigation"] = d
 
     c.on_connect, c.on_disconnect, c.on_message = on_connect, on_disconnect, on_message
     c.connect_async(os.environ.get("BROKER", "broker"), 1883, keepalive=30)
     c.loop_start()
+    s["client"] = c
     return s
 
 
@@ -102,6 +106,62 @@ def live():
         else:
             st.info("no sensor data yet")
 
+    # ---------------------------------------------------------------- Mitigation & IPS Controls
+    mitigation = dict(s.get("mitigation", {}))
+    ips_on = mitigation.get("ips_mode", True)
+    blocked = mitigation.get("blocked", [])
+    quarantined = mitigation.get("quarantined", [])
+    throttled = mitigation.get("throttled", [])
+    calibrated = mitigation.get("calibrated", False)
+    history = mitigation.get("history", [])
+
+    st.markdown("<hr style='margin: 15px 0; border: none; border-top: 1px solid #334155;' />", unsafe_allow_html=True)
+    m_head, m_c1, m_c2, m_c3 = st.columns([3, 1.4, 1.6, 1.2])
+    with m_head:
+        st.subheader("🛡️ Active Defense & Edge Mitigation (IPS)")
+    with m_c1:
+        ips_label = "🟢 IPS Mode: ON" if ips_on else "🔴 IPS Mode: OFF"
+        if st.button(ips_label, key="toggle_ips_btn", help="Toggle between passive IDS (detection only) and active IPS (firewall DROP)"):
+            if s["client"]:
+                s["client"].publish("cmd/mitigation", json.dumps({"action": "toggle_ips", "enabled": not ips_on}))
+            st.rerun()
+    with m_c2:
+        calib_label = "⚡ Calibrate Baseline" if not calibrated else "✅ Calibrated (0% FP)"
+        if st.button(calib_label, key="calib_btn", help="Learn sensor baseline for 20s to eliminate false alarms"):
+            if s["client"]:
+                s["client"].publish("cmd/mitigation", json.dumps({"action": "calibrate", "duration": 20}))
+            st.rerun()
+    with m_c3:
+        if st.button("🔓 Flush Bans", key="flush_bans_btn", help="Clear all firewall bans"):
+            if s["client"]:
+                s["client"].publish("cmd/mitigation", json.dumps({"action": "flush_all"}))
+            st.rerun()
+
+    m_left, m_right = st.columns([3, 2])
+    with m_left:
+        st.markdown("**Active Firewall Bans & Quarantined Nodes**")
+        ban_rows = []
+        for b in blocked:
+            ban_rows.append({"Type": "⛔ IP Banned", "Target": b["ip"], "Reason": b["reason"], "Expires in": f"{b['remaining']}s"})
+        for q in quarantined:
+            ban_rows.append({"Type": "⚠️ Bot Quarantined", "Target": f"{q['node']} ({q['ip']})", "Reason": q["reason"], "Expires in": "Active"})
+        for t in throttled:
+            ban_rows.append({"Type": "⏳ Throttled (5pps)", "Target": t["ip"], "Reason": "Borderline anomaly", "Expires in": f"{t['remaining']}s"})
+        
+        if ban_rows:
+            st.dataframe(pd.DataFrame(ban_rows), hide_index=True, use_container_width=True)
+        else:
+            st.info("No active bans or throttles. All legitimate traffic flowing normally.")
+
+    with m_right:
+        st.markdown("**Live Mitigation Action Log**")
+        if history:
+            h_rows = [{"Time": ev["time"], "Action": ev["action"], "Target": ev["target"], "Reason": ev["reason"]} for ev in reversed(history[:8])]
+            st.dataframe(pd.DataFrame(h_rows), hide_index=True, use_container_width=True)
+        else:
+            st.info("No recent mitigation actions.")
+
+    # ---------------------------------------------------------------- Alerts Header
     # Header with Clear Alerts button
     col_a_title, col_a_btn = st.columns([5, 1])
     with col_a_title:

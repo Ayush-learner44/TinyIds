@@ -17,6 +17,7 @@ from scapy.all import sniff
 from scapy.layers.inet import IP, TCP
 
 from features import FlowTable, KNOWN_FEATURES, packet_values, window_features
+from mitigation import MitigationEngine
 
 MODELS = os.environ.get("MODELS", "/models")
 IFACE = os.environ.get("IFACE", "eth0")
@@ -50,6 +51,15 @@ while True:
         break
     except OSError:
         time.sleep(1)
+
+mitigation = MitigationEngine(client, my_ip=MY_IP, dashboard_ip=DASHBOARD_IP)
+
+def on_mqtt_message(cl, userdata, msg):
+    if msg.topic == "cmd/mitigation":
+        mitigation.handle_command(msg.payload.decode())
+
+client.on_message = on_mqtt_message
+client.subscribe("cmd/mitigation")
 client.loop_start()
 client.publish("ids/status", json.dumps({"started": time.strftime("%H:%M:%S"), "features": F,
                                          "binary": meta["binary"], "family": meta["family"]}), retain=True)
@@ -97,6 +107,10 @@ def classify(src, values, size):
         consecutive_alerts[src] = 0
         stats["model_ms"].append((time.perf_counter() - t0) * 1000)
         return
+    # Borderline anomaly: apply adaptive traffic shaping / rate limiting
+    if 0.70 <= p_attack < 0.90:
+        mitigation.throttle_ip(src, duration=20)
+
     probs = family.predict(x)[0]
     k = int(np.argmax(probs))
     stats["model_ms"].append((time.perf_counter() - t0) * 1000)
@@ -104,6 +118,13 @@ def classify(src, values, size):
     stats["attack_windows"] += 1
     if label == "Benign" or WINDOW_OF.get(label, SMALL) != size:
         stats["ignored"] += 1                           # family disagrees with the gate, or wrong window size
+        consecutive_alerts[src] = 0
+        return
+
+    # Check baseline self-calibration: ignore known benign sensor telemetry noise
+    avg_pkt_size = float(np.mean([item["Header_Length"] for item in values])) if values else 0
+    flow_rate = float(values[-1].get("Rate", 1.0)) if values else 1.0
+    if mitigation.is_calibrated_benign(src, avg_pkt_size, flow_rate):
         consecutive_alerts[src] = 0
         return
 
@@ -130,6 +151,12 @@ def classify(src, values, size):
                    "top3": [[FEATS[i], round(float(x[0, i]), 3), round(float(contrib[i]), 3)] for i in top],
                    "model_ms": round(stats["model_ms"][-1], 3), "shap_ms": round(shap_ms, 3), "source": "model"})
 
+    # Active Mitigation:
+    if src in mitigation.sensor_nodes:
+        mitigation.quarantine_node(mitigation.sensor_nodes[src], src, f"{label} attack ({conf:.2f})")
+    else:
+        mitigation.block_ip(src, f"{label} attack ({conf:.2f})", duration=30)
+
 
 def check_connack(pkt):
     """MQTT brute-force rule: CONNACK packets from the broker with a non-zero return code = refused login."""
@@ -146,6 +173,7 @@ def check_connack(pkt):
                            "top3": [["refused MQTT logins", len(q), 0.0], [f"in last {BF_SECONDS} s", BF_SECONDS, 0.0],
                                     ["rule threshold", BF_FAILS, 0.0]],
                            "model_ms": 0.0, "shap_ms": 0.0, "source": "rule"})
+            mitigation.block_ip(client_ip, f"MQTT BruteForce (>= {BF_FAILS} refused logins in {BF_SECONDS}s)", duration=45)
 
 
 def on_packet(pkt):
@@ -157,6 +185,9 @@ def on_packet(pkt):
                 return
             if pkt[IP].src == DASHBOARD_IP:
                 return
+            if not mitigation.should_process_packet(pkt[IP].src):
+                return
+            mitigation.record_calibration_packet(pkt[IP].src, len(pkt))
         r = packet_values(pkt, flows)
         if r is None:
             return
@@ -202,6 +233,7 @@ def housekeeping():
                 stats["packets"].clear()
                 stats["model_ms"], stats["shap_ms"] = stats["model_ms"][-500:], stats["shap_ms"][-500:]
             client.publish("ids/stats", json.dumps(msg))
+            mitigation.publish_status()
         except Exception as e:
             print(f"housekeeping warning: {e}", flush=True)
 

@@ -24,6 +24,7 @@ services:
   broker:                      # the Pi's Mosquitto
     image: eclipse-mosquitto:2
     restart: unless-stopped
+    cap_add: [NET_ADMIN]
     environment:
       TZ: IST-5:30
     command: sh -c "rm -f /tmp/passwd && mosquitto_passwd -c -b /tmp/passwd tinyids tinyids123 && chmod 0700 /tmp/passwd && chown mosquitto /tmp/passwd && mosquitto -c /mosquitto/config/mosquitto.conf"

