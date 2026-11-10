@@ -1,0 +1,289 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=2cm]{geometry}
+\usepackage{amsmath}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{xcolor}
+\usepackage{parskip}
+\setlist{itemsep=3pt, topsep=3pt}
+\renewcommand{\arraystretch}{1.3}
+
+\begin{document}
+
+{\LARGE\bfseries TinyIDS: end-to-end testbed design}\\[4pt]
+{\large Containers, the IDS pipeline, packet windows, compression / quantization, SHAP dashboard, laptop and Pi stages}\\[2pt]
+Status: design (nothing built yet). Written 07 November 2026.
+
+\tableofcontents
+
+%% =====================================================================
+\newpage
+\section{Why build the pipeline first}
+The model can be improved many times later. Once the pipeline exists, a better model is just a \textbf{file swap}, on one condition:
+the new model must use \textbf{the same feature list} the live feature extractor computes (section 8). So the order is:
+build the pipeline end-to-end with the run-2 models, then keep improving and compressing the models.
+
+\section{The big picture}
+\begin{verbatim}
+ +--------- testbed (Docker on the laptop now; Pi + NodeMCUs later) ----------+
+ |                                                                            |
+ |  sensors --MQTT--> broker (Mosquitto) <-- attacker (hping3, nmap, brute)   |
+ |                        |                                                   |
+ |                        |  IDS captures every packet reaching the broker    |
+ |                        v                                                   |
+ |   IDS: packets -> windows -> features -> model -> SHAP top-3 -> alert      |
+ |                                                                 |          |
+ |                                                MQTT topic  ids/alerts      |
+ |                                                                 v          |
+ |                                       dashboard (browser, localhost:8501)  |
+ +----------------------------------------------------------------------------+
+\end{verbatim}
+\textbf{MQTT} = Message Queuing Telemetry Transport; \textbf{IDS} = Intrusion Detection System;
+\textbf{SHAP} = SHapley Additive exPlanations.
+
+%% =====================================================================
+\section{The five containers}
+\textbf{Docker} runs small isolated Linux ``machines'' (\textbf{containers}) on the laptop. They are joined by a private virtual network that exists
+only inside the laptop, so floods and scans are safe anywhere (never on the college network). All five start with one file,
+\texttt{docker-compose.yml}, and one command: \texttt{docker compose up}.
+
+\begin{longtable}{@{}>{\raggedright}p{2.2cm} >{\raggedright}p{2.6cm} >{\raggedright}p{5.6cm} >{\raggedright\arraybackslash}p{4.8cm}@{}}
+\toprule
+\textbf{Container} & \textbf{Stands in for} & \textbf{What is inside} & \textbf{Job} \\
+\midrule
+\endhead
+\textbf{broker} & the Pi's Mosquitto & Official \texttt{eclipse-mosquitto} image; config with a username/password (needed for the brute-force demo) & Receives sensor data on port 1883 \\
+\textbf{sensors} & the 3 NodeMCUs & Python + \texttt{paho-mqtt}; 3 fake sensors publishing temperature / humidity every 2 s to \texttt{sensors/node1..3} & Normal (Benign) traffic \\
+\textbf{ids} & the TinyIDS program on the Pi & Python + \texttt{scapy} (packet capture), LightGBM, ONNX Runtime, SHAP, \texttt{paho-mqtt}. \textbf{Shares the broker's network} (\texttt{network\_mode: service:broker}), so it sees exactly what the Pi would see & Capture $\rightarrow$ features $\rightarrow$ model $\rightarrow$ SHAP $\rightarrow$ alert (section 4) \\
+\textbf{attacker} & the laptop as attacker & Ubuntu + \texttt{hping3}, \texttt{nmap}, a Python MQTT brute-force script & Runs attacks on command, e.g.\ \texttt{docker compose exec attacker syn\_flood} \\
+\textbf{dashboard} & the ``Dashboard'' box of the proposal & Python + \textbf{Streamlit} (turns a Python script into a web page) + \texttt{paho-mqtt} & Shows live alerts with their top-3 SHAP features (section 7) \\
+\bottomrule
+\end{longtable}
+
+%% =====================================================================
+\newpage
+\section{Inside the IDS, step by step}
+\begin{enumerate}
+\item \textbf{Capture}: \texttt{scapy} grabs every packet arriving at the broker (on the Pi: the \texttt{wlan0} interface).
+\item \textbf{Group into windows per source IP}: packets from each sender are collected separately, so an alert can say \emph{who} is attacking.
+Two window sizes run in parallel (section 5).
+\item \textbf{Feature extractor}: for each full window, compute the features the model was trained on (\texttt{Rate}, \texttt{syn\_count},
+\texttt{Protocol Type}, \texttt{Tot size}, \texttt{Header\_Length}, \dots). \textbf{No \texttt{IAT}} (Inter-Arrival Time): run 2 showed it is a dataset shortcut.
+\item \textbf{Model, in two steps}:
+\begin{itemize}
+\item \textbf{Binary model}: ``attack or normal?'' (99.45\% accurate in run 2; the reliable gate).
+\item If attack: \textbf{family model}: ``which kind?'' (Flood / Mirai / Recon / Spoofing / Web / BruteForce).
+\end{itemize}
+\item \textbf{SHAP, only for windows flagged as attacks}: compute the top-3 features that caused the decision with \textbf{TreeSHAP},
+and \textbf{time it}. That timing is RQ3 (Research Question 3, target $<$ 50 ms).
+\item \textbf{Alert}: publish to the MQTT topic \texttt{ids/alerts}, and keep running counters on \texttt{ids/stats} (packets/s, windows/s, model latency).
+\item \textbf{Extra rule for MQTT brute force}: count failed MQTT logins (\texttt{CONNACK} refusals) per IP in a few seconds.
+This catches what the weak BruteForce class (F1 0.36 in run 2) misses.
+\end{enumerate}
+
+\subsection*{Alert message format}
+{\small
+\begin{verbatim}
+{"time": "21:14:03", "src": "172.30.0.66", "window": 100,
+ "attack": "Flood", "confidence": 0.98,
+ "top3": [["syn_flag_number", 1.0, "+0.45"],
+          ["Rate", 98000, "+0.31"],
+          ["ack_count", 0, "+0.12"]],
+ "model_ms": 1.4, "shap_ms": 12.0}
+\end{verbatim}
+}
+
+%% =====================================================================
+\section{Packet windows: 10 and 100, like the dataset}
+The CICIoT2023 paper did not make one row per packet: it averaged the features over a \textbf{window of consecutive packets}, and used
+\textbf{two window sizes}:
+\begin{center}
+\begin{tabular}{@{}l >{\raggedright\arraybackslash}p{10cm}@{}}
+\toprule
+\textbf{Window} & \textbf{Used for these labels in the dataset} \\
+\midrule
+\textbf{100 packets} & all DDoS, DoS and Mirai attacks (floods produce huge numbers of packets) \\
+\textbf{10 packets} & Benign, Recon, Spoofing, Web-based, BruteForce \\
+\bottomrule
+\end{tabular}
+\end{center}
+So a ``flood'' row in the training data describes 100 packets, and a ``port scan'' row describes 10. The live IDS must produce rows
+that look like the training rows, so it uses \textbf{the same two windows}.
+
+\subsection*{The problem}
+Live, we do not know in advance whether a sender is flooding or scanning, so we cannot pick one window size.
+
+\subsection*{The solution: dual windows, per source IP}
+\begin{enumerate}
+\item For every source IP keep \textbf{two counters at once}: a 10-packet window and a 100-packet window.
+\item Every time a \textbf{10-packet window} fills: compute features, classify. This answers Benign / Recon / Spoofing / Web / BruteForce, and it reacts fast
+(a port scan is caught after 10 packets).
+\item Every time a \textbf{100-packet window} fills: compute features, classify. This answers \textbf{Flood (DDoS/DoS) / Mirai}, exactly like the training rows.
+\item \textbf{Decision rule}:
+\begin{itemize}
+\item Flood / Mirai alerts are taken \textbf{only from 100-packet windows} (as in training).
+\item Recon / Spoofing / Web / BruteForce / Benign are taken \textbf{only from 10-packet windows}.
+\item A window whose prediction does not match its size is ignored (e.g.\ a 10-packet window that says ``Flood'').
+\end{itemize}
+\item \textbf{Slow senders}: a NodeMCU sends about 1 packet every 2 s, so a 100-packet window would take minutes. A \textbf{time-out} (e.g.\ 5 s)
+closes any half-full window so normal traffic is still checked regularly.
+\end{enumerate}
+Floods are so fast (thousands of packets per second) that a 100-packet window fills in milliseconds, so detection is still immediate.
+
+\subsection*{Matching the dataset's calculation}
+Per packet, compute the per-packet values (flags 0/1, protocol, size, header length, \dots) and the per-flow counters (\texttt{syn\_count},
+\texttt{ack\_count}, \dots, kept per connection); then \textbf{average them over the window}, as the dataset authors did with pandas/NumPy.
+The paper does not publish formulas for \texttt{Rate} and \texttt{flow\_duration}; we use the natural definitions
+(packets $\div$ time, last time $-$ first time). Live numbers will be close to, not identical with, the dataset (the proposal's ``validity note'').
+
+%% =====================================================================
+\newpage
+\section{Compression and quantization (RQ2): a required step}
+The proposal (Methodology step 4 and RQ2) requires shrinking the models before deployment and comparing them on the Pi:
+\begin{quote}\itshape
+``Prune tree depth and estimator count; convert the MLP/CNN to TensorFlow Lite or ONNX with INT8 quantization. On the Pi, measure model size (KB),
+peak RAM (MB), latency per flow (ms), throughput (flows/s) and energy per 1,000 inferences.''
+\end{quote}
+Run 2's models are far too big (7--54 MB vs target $<$ 1 MB), so this step is essential, not optional.
+
+\subsection*{Where it sits in the pipeline}
+\begin{center}
+\texttt{train (20\% / full data)} $\rightarrow$ \textbf{\texttt{compress + quantize}} $\rightarrow$ \texttt{export to models/current/} $\rightarrow$
+\texttt{IDS loads it} $\rightarrow$ \texttt{benchmark on the Pi}
+\end{center}
+
+\subsection*{What is done to each model}
+\begin{longtable}{@{}>{\raggedright}p{3.2cm} >{\raggedright}p{6.8cm} >{\raggedright\arraybackslash}p{6cm}@{}}
+\toprule
+\textbf{Model} & \textbf{Compression} & \textbf{Result format} \\
+\midrule
+\endhead
+\textbf{LightGBM} (Light Gradient Boosting Machine) & \textbf{Pruning}: fewer trees (e.g.\ 50--150), fewer leaves (15--31), top-15 features from RQ1.
+\textbf{Quantization}: inputs are binned into at most 255 values (8 bits) and the thresholds/leaf values stored at lower precision. &
+LightGBM text model, and an \textbf{ONNX} file (Open Neural Network Exchange) for ONNX Runtime \\
+\textbf{Random Forest} & \textbf{Pruning}: fewer trees (e.g.\ 20--50), max depth 10--14, top-15 features. & \texttt{.joblib} and ONNX \\
+\textbf{MLP} (Multi-Layer Perceptron) & Export PyTorch $\rightarrow$ ONNX, then \textbf{INT8 quantization} (8-bit integers instead of 32-bit decimals) with ONNX Runtime.
+Optionally \textbf{pruning} of the weakest connections. & INT8 ONNX ($\approx$ 4$\times$ smaller) \\
+\textbf{1D-CNN} (one-dimensional Convolutional Neural Network) & Same as MLP: ONNX + INT8. & INT8 ONNX \\
+\bottomrule
+\end{longtable}
+
+\subsection*{What is measured (before and after compression)}
+\begin{itemize}
+\item \textbf{Accuracy / macro-F1} on \texttt{test.csv}: how much is lost by compressing (should be small).
+\item \textbf{Model size (KB)}: target $<$ 1 MB.
+\item On the Pi: \textbf{peak RAM (MB)} (target $<$ 100 MB), \textbf{latency per window (ms)} (target $<$ 5 ms),
+\textbf{throughput (windows/s)} (target $\geq$ 500), \textbf{energy per 1,000 inferences} with the USB power meter.
+\end{itemize}
+The result is the \textbf{RQ2 table}: which compressed model gives the best accuracy per millisecond and per megabyte on the Pi.
+
+\subsection*{Two models for the IDS, one benchmark for RQ2}
+\begin{itemize}
+\item The \textbf{IDS} uses the best compressed tree models (binary + family), because TreeSHAP explains trees quickly.
+\item \textbf{RQ2} compares all compressed models (tree ensemble, pruned MLP, small 1D-CNN) side by side, using a separate benchmark script on the Pi.
+\end{itemize}
+
+%% =====================================================================
+\newpage
+\section{Swapping models: the contract}
+The IDS loads whatever is in \texttt{models/current/}:
+\begin{center}
+\begin{tabular}{@{}>{\ttfamily}l >{\raggedright\arraybackslash}p{10.5cm}@{}}
+\toprule
+\textrm{\textbf{File}} & \textbf{Content} \\
+\midrule
+binary.onnx / binary.txt & Attack-or-normal model \\
+family.onnx / family.txt & Which-attack model \\
+meta.json & \textbf{Feature list in order}, class names, window sizes, model version, training date and scores \\
+\bottomrule
+\end{tabular}
+\end{center}
+To use a better model: copy the new files into \texttt{models/current/}, restart the IDS container (\texttt{docker compose restart ids}).
+\textbf{Rule:} the features in \texttt{meta.json} must be features the extractor can compute. The training script will write \texttt{meta.json}
+automatically, and the IDS will refuse to start if a feature is unknown.
+
+%% =====================================================================
+\section{Where SHAP and the dashboard run}
+\begin{itemize}
+\item \textbf{SHAP runs inside the IDS} (later on the Pi): it needs the model and the live features, and RQ3 asks for SHAP's speed \emph{on the gateway}.
+It only runs for windows flagged as attacks, which keeps the Pi fast.
+\item \textbf{The dashboard only displays}. It subscribes to \texttt{ids/alerts}, \texttt{ids/stats} and \texttt{sensors/\#} and shows:
+\begin{itemize}
+\item a live \textbf{alert table} (time, attacker IP, attack type, confidence, window size);
+\item for the selected alert, a \textbf{bar chart of its top-3 SHAP features} (the ``reason'');
+\item a \textbf{traffic graph} (packets/s), so a flood is visible as a spike;
+\item \textbf{model and SHAP latency} graphs (live RQ3 evidence);
+\item the \textbf{sensor readings}, showing that normal traffic keeps flowing.
+\end{itemize}
+\item Stage A: the dashboard is a container. Stage B: it runs \textbf{on the laptop} and listens to the Pi's broker, so the Pi does not spend power on drawing web pages.
+\end{itemize}
+
+%% =====================================================================
+\section{Stage A (laptop only) and stage B (Pi + NodeMCUs)}
+\begin{longtable}{@{}l >{\raggedright}p{6.4cm} >{\raggedright\arraybackslash}p{6.4cm}@{}}
+\toprule
+& \textbf{Stage A: laptop only (now, anywhere)} & \textbf{Stage B: lab or own hotspot} \\
+\midrule
+\endhead
+broker & container & \textbf{Pi} (Mosquitto already installed) \\
+sensors & container (3 fake sensors) & \textbf{real NodeMCUs} (and the optional ``master'' botnet sketch) \\
+IDS & container & \textbf{same Python code, run directly on the Pi} \\
+attacker & container & \textbf{laptop} (WSL = Windows Subsystem for Linux, Ubuntu, with hping3 / nmap) \\
+dashboard & container & \textbf{laptop}, listening to the Pi \\
+network & Docker private network inside the laptop & \textbf{own phone hotspot only}, never the college network \\
+\bottomrule
+\end{longtable}
+
+\textbf{Windows limitation:} Docker on Windows cannot properly see attacks coming from \emph{outside} the laptop. Its port forwarding rebuilds
+connections, so a SYN flood from a real device would not arrive as a SYN flood. That is fine for stage A (everything inside Docker).
+For real NodeMCUs and real attacks, use stage B with the Pi, which is the actual project anyway.
+
+%% =====================================================================
+\newpage
+\section{Folder layout}
+\begin{verbatim}
+project_final/testbed/
+|-- docker-compose.yml          starts all five containers
+|-- broker/     mosquitto.conf, passwords
+|-- sensors/    sensor.py
+|-- ids/        Dockerfile, ids.py, windows.py, features.py, explain.py
+|-- attacker/   Dockerfile, syn_flood.sh, udp_flood.sh, port_scan.sh,
+|               mqtt_bruteforce.py
+|-- dashboard/  Dockerfile, app.py
+|-- models/current/   binary + family model files, meta.json
+`-- benchmark/  rq2_benchmark.py   (size / RAM / latency / energy, run on the Pi)
+project_final/model/
+|-- train_tinyids.py            training (already done: runs 1 and 2)
+`-- compress.py                 pruning + ONNX export + INT8 quantization (new)
+\end{verbatim}
+
+\section{Build order}
+\begin{longtable}{@{}r >{\raggedright}p{8.6cm} >{\raggedright\arraybackslash}p{5.6cm}@{}}
+\toprule
+\textbf{\#} & \textbf{Step} & \textbf{Done when} \\
+\midrule
+\endhead
+1 & broker + sensors + dashboard & sensor readings visible in the browser \\
+2 & IDS with the run-2 models, dual windows, no SHAP yet & live windows classified as ``Benign'' \\
+3 & attacker container: SYN flood, UDP flood, port scan & alerts appear (Flood, Flood, Recon) \\
+4 & SHAP top-3 in alerts + dashboard bar chart & every alert shows its reason; SHAP time logged \\
+5 & MQTT brute force + failed-login rule & brute force is alerted \\
+6 & \texttt{compress.py}: pruned trees, ONNX, INT8 MLP / CNN & models $<$ 1 MB, F1 loss measured \\
+7 & swap compressed models into \texttt{models/current/} & IDS still detects all demo attacks \\
+8 & stage B: IDS on the Pi, NodeMCUs, laptop as attacker on a hotspot & live demo on real hardware \\
+9 & \texttt{rq2\_benchmark.py} on the Pi + USB power meter & RQ2 table and RQ3 numbers \\
+10 & final full-data training of the chosen setup, swap in & final numbers for the report \\
+\bottomrule
+\end{longtable}
+
+\section{Model choice for the first pipeline}
+\begin{itemize}
+\item \textbf{Binary model}: LightGBM from run 2 (45 features, no \texttt{IAT}).
+\item \textbf{Family model}: \textbf{7 classes}, with DDoS and DoS merged into \textbf{``Flood''} (run 2 showed they cannot be separated without \texttt{IAT}),
+retrained quickly on the 20\% sample.
+\item Both are replaced later by their compressed versions (step 6--7) and by the final full-data models (step 10).
+\end{itemize}
+
+\end{document}

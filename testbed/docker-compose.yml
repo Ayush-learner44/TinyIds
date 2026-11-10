@@ -1,0 +1,87 @@
+# TinyIDS laptop testbed (stage A). Start: docker compose up -d --build   Stop: docker compose down
+# Dashboard: http://localhost:8501
+# Attacks:   docker compose exec attacker syn_flood | udp_flood | port_scan | mqtt_bruteforce
+
+name: tinyids
+
+networks:
+  iotnet:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+x-sensor: &sensor
+  build: ./sensors
+  restart: unless-stopped
+  depends_on: [broker]
+  environment: &sensor_env
+    TZ: IST-5:30
+    BROKER: 172.30.0.10
+    MQTT_USER: tinyids
+    MQTT_PASS: tinyids123
+
+services:
+  broker:                      # the Pi's Mosquitto
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    environment:
+      TZ: IST-5:30
+    command: sh -c "rm -f /tmp/passwd && mosquitto_passwd -c -b /tmp/passwd tinyids tinyids123 && chmod 0700 /tmp/passwd && chown mosquitto /tmp/passwd && mosquitto -c /mosquitto/config/mosquitto.conf"
+    volumes:
+      - ./broker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    networks:
+      iotnet:
+        ipv4_address: 172.30.0.10
+
+  ids:                         # TinyIDS: shares the broker's network, sees exactly what the Pi would see
+    build: ./ids
+    restart: unless-stopped
+    network_mode: "service:broker"
+    depends_on: [broker]
+    cap_add: [NET_ADMIN, NET_RAW]
+    environment:
+      TZ: IST-5:30
+      IFACE: eth0
+      MY_IP: 172.30.0.10
+      MQTT_USER: tinyids
+      MQTT_PASS: tinyids123
+    volumes:
+      - ./models/current:/models:ro
+
+  sensor1:
+    <<: *sensor
+    environment: {<<: *sensor_env, SENSOR_ID: node1}
+    networks: {iotnet: {ipv4_address: 172.30.0.21}}
+  sensor2:
+    <<: *sensor
+    environment: {<<: *sensor_env, SENSOR_ID: node2}
+    networks: {iotnet: {ipv4_address: 172.30.0.22}}
+  sensor3:
+    <<: *sensor
+    environment: {<<: *sensor_env, SENSOR_ID: node3}
+    networks: {iotnet: {ipv4_address: 172.30.0.23}}
+
+  attacker:                    # the laptop as attacker
+    build: ./attacker
+    restart: unless-stopped
+    environment:
+      TZ: IST-5:30
+      TARGET: 172.30.0.10
+    networks:
+      iotnet:
+        ipv4_address: 172.30.0.66
+
+  dashboard:
+    build: ./dashboard
+    restart: unless-stopped
+    depends_on: [broker]
+    environment:
+      TZ: IST-5:30
+      BROKER: 172.30.0.10
+      MQTT_USER: tinyids
+      MQTT_PASS: tinyids123
+    ports:
+      - "8501:8501"
+    networks:
+      iotnet:
+        ipv4_address: 172.30.0.30

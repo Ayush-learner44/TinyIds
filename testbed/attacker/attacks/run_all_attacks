@@ -1,0 +1,2 @@
+#!/bin/sh
+python3 /usr/local/bin/run_all_attacks.py "$@"

@@ -1,0 +1,45 @@
+# ==========================================
+# TinyIDS .gitignore
+# ==========================================
+
+# 1. Private Personal Files
+resume.txt
+*.private.*
+
+# 2. Heavy Datasets & Raw Captures (GitHub rejects >100MB)
+dataset/
+*.zip
+*.tar.gz
+*.pcap
+*.pcapng
+*.csv
+
+# 3. Model Training Caches & Large Parquet Data
+model/cache/
+*.parquet
+
+# 4. Large Non-Edge Intermediate Models (>50MB)
+*.joblib
+
+# 5. Python & Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+.env
+
+# 6. Logs & Temporary Output
+*.log
+.system_generated/
+.user_uploaded/
+temp/
+tmp/
+
+# 7. OS & IDE Specific
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp

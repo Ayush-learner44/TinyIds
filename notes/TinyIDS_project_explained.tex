@@ -1,0 +1,385 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=2cm]{geometry}
+\usepackage{amsmath}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{xcolor}
+\usepackage{parskip}
+\setlist{itemsep=3pt, topsep=3pt}
+\renewcommand{\arraystretch}{1.3}
+\newcommand{\q}[1]{\begin{quote}\itshape ``#1''\end{quote}}
+
+\begin{document}
+
+{\LARGE\bfseries TinyIDS: the project explained}\\[4pt]
+{\large What the proposal asks for, what every term means, and how we will do it}
+
+\vspace{6pt}
+TinyIDS = a tiny \textbf{IDS (Intrusion Detection System)}: a program that watches network traffic and raises an alert when it sees an attack.
+It must be small and fast enough to run on a \textbf{Raspberry Pi 4} acting as the \textbf{IoT (Internet of Things)} gateway.
+
+\tableofcontents
+
+%% =====================================================================
+\newpage
+\section{The two halves of the project: offline and live}
+
+The proposal asks for two different kinds of work. Mixing them up causes most of the confusion.
+
+\subsection*{(a) Offline: on the dataset}
+\q{Benchmark at least four classifiers on CICIoT2023 for binary (benign vs attack), 8-class and 34-class detection.} (Objective 1)
+
+\textbf{CICIoT2023} = \textbf{Canadian Institute for Cybersecurity IoT dataset 2023}.
+Its \texttt{test.csv} already contains \textbf{all 8 families}: DDoS, DoS, Mirai, Recon, Spoofing, Web-based, BruteForce and Benign.
+You do \emph{not} perform these attacks yourself: the dataset authors already ran them in their lab and recorded the traffic.
+Your model is trained on \texttt{train.csv} and scored on \texttt{test.csv}. This gives the ``accuracy'' numbers of the report.
+
+\subsection*{(b) Live: on your testbed}
+\q{An attacker laptop generates SYN/UDP floods (hping3), port scans (nmap) and MQTT brute force.} (Methodology, step 5)
+
+This is the \textbf{only} live attack list in the proposal. It covers 4 of the 8 families:
+
+\begin{center}
+\begin{tabular}{@{}l l l@{}}
+\toprule
+\textbf{Live attack} & \textbf{Tool} & \textbf{Dataset family} \\
+\midrule
+SYN flood & hping3 & DDoS / DoS \\
+UDP flood & hping3 & DDoS / DoS \\
+Port scan & nmap & Recon \\
+MQTT brute force & small Python script & BruteForce \\
+Normal sensor traffic & NodeMCUs & Benign \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Mirai, Spoofing and Web-based are evaluated only on the dataset.} Nothing is missing.
+(Optional extra later: ARP spoofing can be done live on your own hotspot.)
+
+\subsection*{What the acronyms mean}
+\begin{itemize}
+\item \textbf{DoS} = Denial of Service; \textbf{DDoS} = Distributed Denial of Service (many attackers at once).
+\item \textbf{SYN} = synchronize (the ``let's connect'' TCP packet); \textbf{TCP} = Transmission Control Protocol; \textbf{UDP} = User Datagram Protocol.
+\item \textbf{hping3} = a packet generator (``ping on steroids''); \textbf{nmap} = Network Mapper, a port scanner.
+\item \textbf{MQTT} = Message Queuing Telemetry Transport; \textbf{CoAP} = Constrained Application Protocol.
+\end{itemize}
+
+%% =====================================================================
+\newpage
+\section{Machine learning in plain English}
+
+\subsection*{The basics}
+\begin{itemize}
+\item \textbf{Feature} = one input column (e.g.\ \texttt{Rate}, \texttt{syn\_flag\_number}). CICIoT2023 has 46.
+\item \textbf{Label} = the correct answer for a row (e.g.\ \texttt{DDoS-SYN\_Flood}).
+\item \textbf{Classifier} = a program that looks at a row's features and predicts its label. It \emph{learns} this by looking at millions of labelled rows (``training'').
+\item \textbf{Binary / 8-class / 34-class} = how detailed the answer must be: attack-or-benign, which family, or which exact attack.
+\end{itemize}
+
+\subsection*{The four models the proposal asks for}
+\q{Train Random Forest, XGBoost/LightGBM, a 3-layer MLP and a small 1D-CNN.} (Methodology, step 2)
+
+\begin{longtable}{@{}>{\raggedright}p{4.2cm} >{\raggedright\arraybackslash}p{11.8cm}@{}}
+\toprule
+\textbf{Model} & \textbf{What it is} \\
+\midrule
+\endhead
+\textbf{Decision tree} (building block) & A flowchart of yes/no questions learned from data:
+``\texttt{Rate} $>$ 5000? $\rightarrow$ \texttt{syn\_flag\_number} $>$ 0.8? $\rightarrow$ SYN flood''. Easy to understand, but one tree alone makes mistakes. \\
+\textbf{Random Forest (RF)} & \textbf{Hundreds of decision trees that vote.} Each tree is trained on a slightly different random part of the data; the majority answer wins. Accurate, robust, easy to use. \\
+\textbf{XGBoost} = eXtreme Gradient Boosting & Also many trees, but built \textbf{one after another}: each new tree focuses on fixing the mistakes of the previous ones (``boosting''). Usually the most accurate on table data like ours. \\
+\textbf{LightGBM} = Light Gradient Boosting Machine & Microsoft's faster, lighter version of the same boosting idea. The proposal says ``XGBoost/LightGBM'': \textbf{pick one}. We will use LightGBM (fast, small models). \\
+\textbf{MLP} = Multi-Layer Perceptron & The classic \textbf{ANN (Artificial Neural Network)}: layers of ``neurons'' connected by weights. ``3-layer'' = three layers. \\
+\textbf{1D-CNN} = one-dimensional Convolutional Neural Network & A neural network that slides a small window \textbf{along a row of numbers} (1-D) instead of across an image (2-D). For table data it is usually \emph{not} better than trees; it is included because many IDS papers use it, so it gives a fair comparison point. \\
+\bottomrule
+\end{longtable}
+
+\textbf{Expected result:} the tree models (RF, LightGBM) will probably be the most accurate \emph{and} the fastest/smallest. That is a perfectly good finding.
+
+\subsection*{How models are scored}
+\begin{itemize}
+\item \textbf{Accuracy} = fraction of rows predicted correctly. Misleading on unbalanced data (predicting ``DDoS'' for everything already gives 73\%).
+\item \textbf{Precision} = of the rows the model called ``attack X'', how many really were X.
+\item \textbf{Recall} = of all real ``attack X'' rows, how many the model found.
+\item \textbf{F1-score} = one number combining precision and recall (their harmonic mean), from 0 to 1.
+\item \textbf{Macro-F1} = the F1 of every class \textbf{averaged equally}, so rare attacks (Web, BruteForce) count as much as DDoS. The proposal uses this.
+\item \textbf{Confusion matrix} = a table of ``real class vs predicted class'' showing exactly which attacks get mixed up.
+\item \textbf{FPR (False Positive Rate)} = how often normal traffic is wrongly flagged as an attack.
+\end{itemize}
+
+%% =====================================================================
+\newpage
+\section{Making models small: compression}
+
+The Pi is much weaker than a laptop, so the trained models are shrunk before deployment.
+
+\begin{longtable}{@{}>{\raggedright}p{4.2cm} >{\raggedright\arraybackslash}p{11.8cm}@{}}
+\toprule
+\textbf{Term} & \textbf{Meaning} \\
+\midrule
+\endhead
+\textbf{Pruning} & Cutting away the parts of a model that matter least.
+Trees: fewer trees and less depth. MLP: remove the weakest connections between neurons. \\
+\textbf{Quantization} & Storing the model's numbers with fewer bits, e.g.\ 32-bit decimal numbers $\rightarrow$ \textbf{INT8} (8-bit integers).
+About $4\times$ smaller and faster, with a very small accuracy loss. \\
+\textbf{Quantized tree ensemble} & ``Ensemble'' = many trees together (RF or LightGBM). Quantized = its thresholds/values stored in fewer bits, and usually pruned too. \\
+\textbf{TFLite} = TensorFlow Lite & Google's format for running neural networks (MLP, CNN) on small devices like phones and the Pi. \\
+\textbf{ONNX} = Open Neural Network Exchange & An open, universal model file format. \textbf{ONNX Runtime} runs ONNX models fast on almost any device, including the Pi. Tree models can also be exported to ONNX. \\
+\bottomrule
+\end{longtable}
+
+%% =====================================================================
+\section{SHAP: explaining every alert}
+
+\textbf{SHAP} = \textbf{SHapley Additive exPlanations}. It is based on Shapley values from game theory: it treats the features like players in a team
+and fairly splits ``credit'' for the decision among them.
+
+For \textbf{one} prediction it gives every feature a score: how much it pushed the decision towards (+) or away from ($-$) the predicted class. Example alert:
+\begin{verbatim}
+ALERT: DDoS-SYN_Flood
+  because  syn_flag_number = 1.0      (+0.45)
+           Rate = 98,000 packets/s    (+0.31)
+           ack_flag_number = 0.0      (+0.12)
+\end{verbatim}
+These are the \textbf{``top 3 features''} the dashboard must show.
+\textbf{TreeSHAP} is the fast, exact version of SHAP for tree models (RF, LightGBM, XGBoost).
+
+SHAP has \textbf{two uses} in this project:
+\begin{enumerate}
+\item \textbf{Explain live alerts} (RQ3, Objective 5).
+\item \textbf{Rank features} (RQ1, Objective 2): average the absolute SHAP scores over many rows $\rightarrow$ a ranking of the most important features
+$\rightarrow$ retrain using only the top 5 / 10 / 15 / 20.
+\end{enumerate}
+
+%% =====================================================================
+\newpage
+\section{The three research questions (RQ) in plain words}
+
+\subsection*{RQ1: how many features do we really need?}
+\q{How few flow features (out of 46 in CICIoT2023) are needed to keep macro-F1 within 2\% of the full-feature model?}
+\begin{enumerate}
+\item Train with \textbf{all 46 features}. Say macro-F1 = 0.90.
+\item Retrain with only the top 5, 10, 15, 20 features (ranked by SHAP).
+\item Find the \textbf{smallest} number that still reaches \textbf{at least 0.88} (within 2 points of 0.90).
+\end{enumerate}
+It does \textbf{not} mean ``98\% accuracy''. Fewer features = faster feature extraction on the Pi.
+Result: one plot, macro-F1 vs number of features.
+
+\subsection*{RQ2: which compressed model is best on the Pi?}
+\q{Which compressed model (quantized tree ensemble, pruned MLP, small 1D-CNN) gives the best accuracy per millisecond and per megabyte on the Pi?}
+Compare the three compressed models on the Pi: accuracy vs speed (milliseconds per prediction) vs size (megabytes). Result: one benchmark table.
+
+\subsection*{RQ3: can SHAP keep up?}
+\q{Can SHAP-based explanations be produced on the gateway fast enough to accompany live alerts?}
+Measure how long TreeSHAP takes per alert on the Pi. Target: under 50 ms. Result: one number (plus a few examples).
+
+\section{Targets from the proposal (Evaluation metrics)}
+\begin{center}
+\begin{tabular}{@{}l >{\raggedright}p{4.6cm} >{\raggedright\arraybackslash}p{7.6cm}@{}}
+\toprule
+\textbf{Category} & \textbf{What is measured} & \textbf{Target} \\
+\midrule
+Detection & macro-F1, per-class recall, FPR & \textbf{Binary F1 $\geq$ 0.98}; 8-class within 2\% of full-feature model \\
+Efficiency & model size, peak RAM on the Pi & \textbf{$<$ 1 MB} model; \textbf{$<$ 100 MB} RAM \\
+Speed & latency per flow, throughput & \textbf{$<$ 5 ms} per flow; \textbf{$\geq$ 500 flows/s} \\
+Energy & mJ (millijoules) per inference & just report it for every model \\
+Explainability & extra SHAP time per alert & \textbf{$<$ 50 ms} \\
+\bottomrule
+\end{tabular}
+\end{center}
+Note: RAM is in \textbf{megabytes}, not kilobytes. \textbf{RAM} = Random Access Memory. For a Pi 4 with 4 GB RAM these targets are relaxed;
+tree models easily fit in under 1 MB.
+
+%% =====================================================================
+\newpage
+\section{The testbed: build everything on the laptop first}
+
+\subsection*{The plan}
+\begin{center}
+\begin{tabular}{@{}l >{\raggedright}p{6.8cm} l l@{}}
+\toprule
+\textbf{Phase} & \textbf{What} & \textbf{Where} & \textbf{Needs lab/Pi?} \\
+\midrule
+1. Train & Train RF, LightGBM, MLP, 1D-CNN on CICIoT2023 (binary + 8-class), SHAP ranking, retrain on top-k features, save model files. & Laptop / Colab & No \\
+2. Laptop testbed & Fake gateway + fake sensors + attacker as Docker containers; run attacks; check detection. & Laptop (Docker) & No \\
+3. Pi & Copy the same code to the Pi, real NodeMCUs, measure size / RAM / speed / energy. & Lab & \textbf{Yes} \\
+4. Finish & Dashboard with top-3 SHAP features, demo video, report. & Laptop & No \\
+\bottomrule
+\end{tabular}
+\end{center}
+Only phase 3 needs the lab. The Pi runs Linux and Python like the Docker containers, so the code moves over almost unchanged.
+(\textbf{Colab} = Google Colaboratory, free online Python notebooks with a GPU, Graphics Processing Unit.)
+
+\subsection*{The laptop testbed (phase 2)}
+\textbf{Docker} runs small isolated Linux ``machines'' (\textbf{containers}) on the laptop, joined by a \textbf{private virtual network}:
+
+\begin{verbatim}
+        Docker private network (exists only inside the laptop)
+ +--------------+   +----------------------------------+   +--------------+
+ | sensors x3   |-->| GATEWAY  (stands in for the Pi)  |<--| ATTACKER     |
+ | fake NodeMCU |   | Mosquitto + sniffer + IDS model  |   | hping3, nmap |
+ | publishers   |   +----------------------------------+   | brute force  |
+ +--------------+                                           +--------------+
+\end{verbatim}
+\begin{itemize}
+\item \textbf{Gateway}: runs Mosquitto (the MQTT broker), captures every packet, builds the features (Rate, SYN fraction, \dots) for each window of packets, and asks the model ``attack or not?''. Alerts go to the dashboard with the top-3 SHAP features.
+\item \textbf{Sensors}: small Python scripts publishing fake temperatures over MQTT, like the NodeMCU test.
+\item \textbf{Attacker}: has hping3, nmap and an MQTT brute-force script.
+\end{itemize}
+\textbf{Big advantage:} attack traffic never leaves the laptop, so it is safe to run anywhere (hostel, home) without touching the college network.
+Already available on the laptop: Docker Desktop, \textbf{WSL} (Windows Subsystem for Linux) with Ubuntu, Wireshark/Npcap, 15 GB RAM.
+
+\subsection*{What can be done without the lab or the Pi}
+\begin{itemize}
+\item All of phase 1 (training, SHAP, feature selection, compression, accuracy tables and plots).
+\item All of phase 2 (live detection on the Docker testbed, all four live attacks).
+\item The dashboard and most of the report.
+\item The NodeMCUs can join the laptop testbed over a phone hotspot (laptop runs the broker and IDS) whenever you have them with you.
+\end{itemize}
+Only the \textbf{Pi-specific measurements} (model speed, RAM and energy on the Pi) need the Pi.
+
+%% =====================================================================
+\newpage
+\section{Performing the attacks}
+
+\subsection*{No device has to be ``compromised''}
+The attacker simply sends bad traffic \textbf{at} the gateway, the way a real attacker would.
+The gateway does not have to be insecure: a flood still hits it, and the IDS's job is to \textbf{notice}.
+
+\begin{longtable}{@{}>{\raggedright}p{3.2cm} >{\raggedright}p{3.8cm} >{\raggedright\arraybackslash}p{8.8cm}@{}}
+\toprule
+\textbf{Attack} & \textbf{Tool / command idea} & \textbf{What happens} \\
+\midrule
+\endhead
+SYN flood & \texttt{hping3 -S --flood -p 1883 <gateway>} & Thousands of ``let's connect'' (SYN) packets per second that never complete the handshake. \\
+UDP flood & \texttt{hping3 --udp --flood <gateway>} & A blast of junk UDP packets. \\
+Port scan & \texttt{nmap <gateway>} & Knocks on every port to see which are open (closed ports reply with RST). \\
+MQTT brute force & Python script & Tries many username/password pairs on Mosquitto (needs a password set on the broker). \\
+\bottomrule
+\end{longtable}
+
+\subsection*{What the professor probably meant by ``compromise a device''}
+Real botnets like Mirai first take over IoT devices and then use them to flood a target. You do not have to reproduce that:
+the dataset already contains Mirai traffic. But you \emph{can} show the idea safely with your own NodeMCUs (next section).
+
+\subsection*{Can we install real Mirai on the NodeMCU?}
+\textbf{No.} Mirai is Linux malware for cameras and routers that run a small Linux system. The \textbf{ESP8266} chip on the NodeMCU
+does not run Linux, so Mirai cannot run on it. Real Mirai would also automatically try to break into other devices on the network,
+which on the college network would be a genuine attack on other people's devices. We imitate its behaviour instead.
+
+\subsection*{Rules}
+\begin{itemize}
+\item Attack \textbf{only your own setup}: the Docker network on the laptop, or the Pi + NodeMCUs on your own phone hotspot.
+\item \textbf{Never} run floods or scans on the college network: IT will see a real attack.
+\end{itemize}
+
+%% =====================================================================
+\newpage
+\section{Planned: laptop as ``master'' of the NodeMCUs (simulated botnet)}
+
+\subsection*{The idea}
+This imitates how Mirai controls infected devices, using only your own hardware:
+\begin{enumerate}
+\item Each NodeMCU runs a sketch that behaves like a \textbf{normal sensor}: it publishes data every few seconds.
+\item It also \textbf{listens} on an MQTT command topic, e.g.\ \texttt{cmd/all}.
+\item From the laptop (the ``master'', like Mirai's \textbf{C2} = Command-and-Control server) you publish a command, e.g.\\
+\texttt{\{"attack":"udp\_flood","seconds":10\}}
+\item Every NodeMCU suddenly starts attacking the gateway at the same time $\Rightarrow$ a small \textbf{DDoS} from ``compromised sensors''.
+\item After the time is up (or on a \texttt{stop} command) they go back to being normal sensors.
+\item The IDS should flag the flood and show which features gave it away.
+\end{enumerate}
+\textbf{Yes, this is possible} and it makes a strong demo: normal traffic $\rightarrow$ command $\rightarrow$ coordinated attack $\rightarrow$ alert.
+
+\subsection*{What a NodeMCU can and cannot do}
+\begin{center}
+\begin{tabular}{@{}>{\raggedright}p{4.6cm} >{\raggedright}p{3.8cm} >{\raggedright\arraybackslash}p{7.2cm}@{}}
+\toprule
+\textbf{Attack from a NodeMCU} & \textbf{Possible?} & \textbf{Note} \\
+\midrule
+UDP flood & Yes & Like Mirai's \texttt{udpplain}. A few thousand packets/s per board. \\
+TCP connection flood & Yes & Opens many real connections quickly. \\
+Raw SYN flood with fake IPs & No & The ESP8266 cannot build raw packets; use hping3 on the laptop for this. \\
+HTTP (web request) flood & Yes, if the gateway runs a web page & Optional. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{Built-in safety (part of the plan)}
+\begin{itemize}
+\item The attack target is \textbf{fixed in the sketch} (only the gateway's IP), not taken from the command.
+\item Every attack has a \textbf{maximum duration} (e.g.\ 30 s) and stops by itself.
+\item Use it only on your own hotspot / testbed network.
+\end{itemize}
+
+\subsection*{Where it fits}
+After phase 2 works with hping3, we add this as the ``compromised IoT device'' demo in phase 3 (or on the laptop testbed with NodeMCUs on a hotspot).
+
+%% =====================================================================
+\section{Next steps}
+\begin{enumerate}
+\item \textbf{Training script}: load a sample of \texttt{train.csv}, keep features we can compute live, train RF + LightGBM + MLP + 1D-CNN for binary and 8-class, report macro-F1 and confusion matrices on \texttt{test.csv}, save the models.
+\item SHAP feature ranking and retraining with top 5/10/15/20 (RQ1 plot).
+\item Docker testbed with gateway, sensors and attacker.
+\item Live detection + SHAP alerts + dashboard.
+\item Pi deployment and benchmark table (RQ2, RQ3).
+\item Optional: master-controlled NodeMCU botnet demo.
+\end{enumerate}
+
+%% =====================================================================
+\newpage
+\section*{Appendix: full forms of all abbreviations}
+\addcontentsline{toc}{section}{Appendix: full forms of all abbreviations}
+\begin{longtable}{@{}>{\bfseries}l >{\raggedright\arraybackslash}p{12.5cm}@{}}
+\toprule
+Abbreviation & Full form / meaning \\
+\midrule
+\endhead
+ACK & Acknowledge (TCP flag: ``got it'') \\
+ANN & Artificial Neural Network \\
+ARP & Address Resolution Protocol (``who has this IP address?'') \\
+C2 & Command-and-Control (the server that gives orders to a botnet) \\
+CICIoT2023 & Canadian Institute for Cybersecurity IoT dataset 2023 \\
+CNN / 1D-CNN & Convolutional Neural Network / one-dimensional CNN \\
+CoAP & Constrained Application Protocol \\
+DDoS & Distributed Denial of Service \\
+DNS & Domain Name System (turns names like google.com into IP addresses) \\
+DoS & Denial of Service \\
+ESP8266 & The Wi-Fi microcontroller chip on the NodeMCU (made by Espressif) \\
+F1 & F1-score (harmonic mean of precision and recall) \\
+FPR & False Positive Rate \\
+GPU & Graphics Processing Unit \\
+GRE & Generic Routing Encapsulation (a tunnelling protocol, used by Mirai floods) \\
+IAT & Inter-Arrival Time (gap between two packets) \\
+ICMP & Internet Control Message Protocol (ping) \\
+IDS & Intrusion Detection System \\
+INT8 & 8-bit integer \\
+IoT & Internet of Things \\
+IP & Internet Protocol \\
+JSON & JavaScript Object Notation (text format for data) \\
+LightGBM & Light Gradient Boosting Machine \\
+MITM & Man-in-the-Middle \\
+MLP & Multi-Layer Perceptron \\
+MQTT & Message Queuing Telemetry Transport \\
+NodeMCU & Node MicroController Unit (the ESP8266 development board) \\
+ONNX & Open Neural Network Exchange \\
+RAM & Random Access Memory \\
+RF & Random Forest \\
+RQ & Research Question \\
+RSSI & Received Signal Strength Indicator \\
+RST & Reset (TCP flag: ``abort this connection'') \\
+SHAP & SHapley Additive exPlanations \\
+SQL & Structured Query Language (databases) \\
+SYN & Synchronize (TCP flag: ``let's connect'') \\
+TCP & Transmission Control Protocol \\
+TFLite & TensorFlow Lite \\
+TTL & Time To Live \\
+UDP & User Datagram Protocol \\
+WSL & Windows Subsystem for Linux \\
+XGBoost & eXtreme Gradient Boosting \\
+XSS & Cross-Site Scripting \\
+\bottomrule
+\end{longtable}
+
+\end{document}

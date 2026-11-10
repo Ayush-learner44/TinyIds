@@ -1,0 +1,223 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=2cm]{geometry}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{xcolor}
+\usepackage{parskip}
+\usepackage{fancyvrb}
+\setlist{itemsep=3pt, topsep=3pt}
+\renewcommand{\arraystretch}{1.25}
+\sloppy
+\newcommand{\pc}[1]{\textcolor{blue!60!black}{\textbf{#1}}}
+
+\begin{document}
+
+{\LARGE\bfseries TinyIDS deployment: Pi + NodeMCU + laptop}\\[4pt]
+{\large Run the full pipeline on real hardware, step by step}\\[2pt]
+07 November 2026. Folder: \texttt{project\_final/deploy/}. Pi IP in this guide: \texttt{172.29.1.135} (check yours with \texttt{hostname -I}).
+
+\tableofcontents
+
+%% =====================================================================
+\newpage
+\section{What runs where}
+\begin{verbatim}
+ NodeMCU (sensor + "bot") ---+
+                             +--> Pi: our Mosquitto (port 1884)
+ Laptop (attacks, dashboard) +        + TinyIDS detector + benchmark
+         ^                                   |
+         +------ alerts, statistics (MQTT) --+
+\end{verbatim}
+\begin{itemize}
+\item \textbf{Pi = gateway}: our own MQTT broker (Mosquitto, port \textbf{1884}, with a password) and the \textbf{TinyIDS detector}
+(packet capture $\rightarrow$ features $\rightarrow$ models $\rightarrow$ SHAP $\rightarrow$ alerts). The lab's own broker on port 1883 is not touched.
+\item \textbf{NodeMCU}: a normal sensor that can be turned into a ``bot'' by a command from the laptop.
+\item \textbf{Laptop}: the attacks and the live dashboard.
+\end{itemize}
+\textbf{Abbreviations}: MQTT = Message Queuing Telemetry Transport; IDS = Intrusion Detection System;
+SHAP = SHapley Additive exPlanations; SSH = Secure Shell; venv = Python virtual environment; RAM = Random Access Memory.
+
+\section{The folder}
+\begin{longtable}{@{}>{\ttfamily\small\raggedright}p{6.4cm} >{\raggedright\arraybackslash}p{9.4cm}@{}}
+\toprule
+\textrm{\textbf{File}} & \textbf{What it is} \\
+\midrule
+\endhead
+pi/run\_tinyids.py & Main program: connects all the parts below (class \texttt{TinyIDS}). \\
+pi/tinyids/settings.py & All settings in one place (interface, port, window sizes, limits). \\
+pi/tinyids/features.py & \texttt{PacketReader}, \texttt{FlowTable}, \texttt{FeatureBuilder}: packets $\rightarrow$ the 30 dataset features. \\
+pi/tinyids/windows.py & \texttt{WindowCollector}: per sender, windows of 10 and 100 packets. \\
+pi/tinyids/detector.py & \texttt{Detector}: binary model, family model, SHAP top-3. \\
+pi/tinyids/rules.py & \texttt{BruteForceRule}: many refused MQTT logins = brute force. \\
+pi/tinyids/publisher.py & \texttt{AlertPublisher}: sends alerts / statistics over MQTT. \\
+pi/tinyids/stats.py & \texttt{Stats}: counters for the dashboard. \\
+pi/models/ & The two LightGBM models + \texttt{meta.json} (feature list, classes). \\
+pi/broker/tinyids\_broker.conf & Config of our broker (port 1884, password required). \\
+pi/setup\_pi.sh, pi/run\_ids.sh & The setup commands and the start commands, for sharing. \\
+pi/benchmark/rq2\_benchmark.py & RQ2 benchmark: size, RAM, speed, accuracy, energy (+ test data and 7 models). \\
+laptop/dashboard.py & Live dashboard (Streamlit). \\
+laptop/attacks/*.py & \texttt{attack\_base.py} (shared sending loop) + SYN flood, UDP flood, port scan, MQTT brute force. \\
+laptop/bot\_master.py & Sends commands to the NodeMCU bots. \\
+nodemcu/nodemcu\_bot/nodemcu\_bot.ino & NodeMCU sketch: sensor + bot. \\
+\bottomrule
+\end{longtable}
+
+%% =====================================================================
+\newpage
+\section{Step A: laptop libraries (once)}
+\begin{Verbatim}[frame=single]
+cd C:\Users\HOME\Documents\iot\project_final\deploy\laptop
+pip install -r requirements.txt
+\end{Verbatim}
+Installs \texttt{scapy} (builds attack packets), \texttt{paho-mqtt}, \texttt{streamlit} + \texttt{pandas} (dashboard).
+
+\section{Step B: copy the Pi part to the Pi}
+In laptop PowerShell:
+\begin{Verbatim}[frame=single,fontsize=\small]
+scp -r C:\Users\HOME\Documents\iot\project_final\deploy\pi pi@172.29.1.135:~/tinyids
+\end{Verbatim}
+\texttt{scp} = copy over SSH. The \texttt{pi} folder becomes \texttt{\textasciitilde/tinyids} on the Pi.
+
+\section{Step C: Pi one-time setup}
+In the SSH window, type one line at a time:
+\begin{Verbatim}[frame=single,fontsize=\footnotesize]
+cd ~/tinyids
+PROXY=http://172.31.2.3:8080
+sudo date -s "$(curl -sI -x $PROXY https://www.google.com | grep -i '^date:' | cut -d' ' -f2-)"
+python3 -m venv venv
+./venv/bin/pip install --proxy $PROXY numpy lightgbm scapy paho-mqtt onnxruntime psutil
+dpkg -s libgomp1 libpcap0.8 >/dev/null 2>&1 || sudo apt install -y libgomp1 libpcap0.8
+mosquitto_passwd -c -b broker/passwd tinyids tinyids123
+chmod 0700 broker/passwd
+./venv/bin/python -c "import lightgbm, scapy, onnxruntime, paho.mqtt; print('all OK')"
+\end{Verbatim}
+\begin{enumerate}
+\item \textbf{Clock}: the college blocks the time server, so the time is read from Google through the proxy.
+\item \textbf{venv}: a private Python only for this project (Debian blocks \texttt{pip} in the system Python).
+\item \textbf{Packages} through the college proxy (about 80 MB).
+\item \textbf{System libraries} for LightGBM and packet capture, installed only if missing.
+\item \textbf{Password} for our broker (user \texttt{tinyids}); \texttt{chmod 0700} = only you can read it (Mosquitto requires this).
+\item \textbf{Check}: must print \texttt{all OK}.
+\end{enumerate}
+\textbf{Note: no ``(venv)'' in the prompt is normal.} It only appears after \texttt{source venv/bin/activate}. We call \texttt{./venv/bin/pip} and
+\texttt{./venv/bin/python} directly instead, which does the same, and also works with \texttt{sudo} (which ignores an activated venv).
+
+\textbf{Undo everything}: \texttt{rm -rf \textasciitilde/tinyids}.
+
+%% =====================================================================
+\newpage
+\section{Step D: Pi: start our broker and the detector}
+\begin{Verbatim}[frame=single]
+cd ~/tinyids
+mosquitto -c /home/pi/tinyids/broker/tinyids_broker.conf -d
+ss -ltn | grep 1884
+sudo ./venv/bin/python run_tinyids.py --interface wlan0
+\end{Verbatim}
+\begin{itemize}
+\item \texttt{mosquitto ... -d}: starts \emph{our} broker in the background (\texttt{-d} = daemon).
+\item \texttt{ss -ltn | grep 1884}: checks it is listening; must show \texttt{LISTEN ... :1884}.
+\item \texttt{sudo ./venv/bin/python run\_tinyids.py}: the detector (\texttt{sudo} because capturing packets needs root).
+It prints \texttt{TinyIDS watching wlan0 (172.29.1.135), broker port 1884}. \textbf{Keep this window open}: alerts are printed here.
+\end{itemize}
+(\texttt{./run\_ids.sh} does both start commands in one go.)
+
+\section{Step E: laptop: dashboard}
+New PowerShell window:
+\begin{Verbatim}[frame=single]
+cd C:\Users\HOME\Documents\iot\project_final\deploy\laptop
+streamlit run dashboard.py -- 172.29.1.135
+\end{Verbatim}
+Open \textbf{http://localhost:8501}. Top left must say \textbf{Broker: connected}.
+The \texttt{--} separates Streamlit's own options from the dashboard's options (the Pi's IP).
+
+\textbf{Dashboard on the Pi's own monitor?} Possible: \texttt{./venv/bin/pip install --proxy \$PROXY streamlit pandas}, then
+\texttt{./venv/bin/streamlit run dashboard.py -- 127.0.0.1} on the Pi (copy \texttt{dashboard.py} there first). Not recommended during measurements:
+Streamlit and a browser use a lot of the Pi's CPU and RAM and distort the benchmark numbers.
+
+\section{Step F: NodeMCU: the bot sketch}
+\begin{enumerate}
+\item Arduino IDE: open \texttt{deploy/nodemcu/nodemcu\_bot/nodemcu\_bot.ino}.
+\item Check the settings at the top: \texttt{WIFI\_SSID "IIITA"}, \texttt{WIFI\_PASS ""}, \texttt{GATEWAY\_IP "172.29.1.135"}, \texttt{MQTT\_PORT 1884}.
+\item Board \textbf{NodeMCU 1.0 (ESP-12E Module)}, the right COM port, \textbf{Upload}.
+\item Serial Monitor at \textbf{9600}: \texttt{Wi-Fi OK}, then \texttt{MQTT 172.29.1.135:1884 ... OK}, then a reading every 2 s.
+\item The dashboard's Sensors table shows \textbf{node1}.
+\end{enumerate}
+Known issue: the model may flag the NodeMCU's normal traffic as ``Spoofing'' (its normal traffic looks different from the dataset's). Ignore for now.
+
+%% =====================================================================
+\newpage
+\section{Step G: laptop: the attacks}
+PowerShell \textbf{as Administrator} (scapy needs it to send raw packets on Windows):
+\begin{Verbatim}[frame=single]
+cd C:\Users\HOME\Documents\iot\project_final\deploy\laptop\attacks
+python syn_flood.py 172.29.1.135 --seconds 10
+python udp_flood.py 172.29.1.135 --seconds 10
+python port_scan.py 172.29.1.135 --last 200
+python mqtt_bruteforce.py 172.29.1.135
+\end{Verbatim}
+\begin{longtable}{@{}l >{\raggedright}p{7cm} >{\raggedright\arraybackslash}p{5cm}@{}}
+\toprule
+\textbf{Attack} & \textbf{What it sends} & \textbf{Expected alert} \\
+\midrule
+\endhead
+SYN flood & 1,000 TCP ``let's connect'' packets/s to port 1884, never finished & Flood \\
+UDP flood & 1,000 small junk UDP packets/s to port 5683 & Flood \\
+Port scan & one SYN to each port 1--200; prints the open ports & Recon (or Flood: it is fast) \\
+MQTT brute force & tries common passwords for user \texttt{tinyids} on port 1884 & BruteForce (rule) \\
+\bottomrule
+\end{longtable}
+Wait about 10 s between attacks; watch the Pi window and the dashboard. Defaults: 10 s, 1,000 packets/s, only the Pi's IP.
+
+\section{Step H: laptop: the NodeMCU as a bot}
+\begin{Verbatim}[frame=single]
+cd C:\Users\HOME\Documents\iot\project_final\deploy\laptop
+python bot_master.py 172.29.1.135 udp_flood --seconds 10
+python bot_master.py 172.29.1.135 tcp_flood --seconds 10
+python bot_master.py 172.29.1.135 stop
+\end{Verbatim}
+The laptop publishes a command on topic \texttt{cmd/bot}; the NodeMCU floods the Pi (the only target, fixed in the sketch) and returns to normal
+after the time (max 30 s). The alert's source IP is the NodeMCU's IP. Bot messages appear on \texttt{bot/node1/status}.
+
+%% =====================================================================
+\section{Step I: Pi: the benchmark (RQ2)}
+First stop the detector (\textbf{Ctrl+C}) so it does not disturb the measurement.
+\begin{Verbatim}[frame=single]
+cd ~/tinyids
+./venv/bin/python benchmark/rq2_benchmark.py
+./venv/bin/python benchmark/rq2_benchmark.py --energy mlp_int8
+\end{Verbatim}
+\begin{itemize}
+\item The first command measures 7 models (IDS LightGBM, pruned LightGBM / Random Forest in ONNX, MLP and 1D-CNN in fp32 and INT8), each in a fresh
+process: \textbf{size (KB)}, \textbf{RAM (MB)}, \textbf{time per window (ms)}, \textbf{throughput (windows/s)}, \textbf{SHAP time (ms)},
+accuracy and macro-F1 on 20,000 test windows. Saved to \texttt{benchmark/results\_pi.csv}.
+\item The second is the \textbf{energy} test and needs the \textbf{USB power meter}: a small \textbf{hardware} device plugged between the Pi's power
+adapter and the Pi, with a screen showing watts. The script has an idle phase and a busy phase of 30 s each; you read the meter in both and type the
+two numbers; it computes \textbf{mJ per 1,000 windows}. The Pi 4 has no built-in power sensor, so there is no software replacement.
+\end{itemize}
+
+\section{Step J: clean up on the Pi}
+\begin{Verbatim}[frame=single]
+pkill -f tinyids_broker.conf
+\end{Verbatim}
+Stops \emph{our} broker only. The lab's broker on port 1883 keeps running.
+
+\section{Troubleshooting}
+\begin{longtable}{@{}>{\raggedright}p{5.6cm} >{\raggedright\arraybackslash}p{10.2cm}@{}}
+\toprule
+\textbf{Problem} & \textbf{Fix} \\
+\midrule
+\endhead
+\texttt{scp}: connection refused / wrong IP & Check the Pi's IP with \texttt{hostname -I}. \\
+\texttt{pip}: connection errors on the Pi & Proxy missing: add \texttt{--proxy http://172.31.2.3:8080}. \\
+\texttt{apt}: 403 Forbidden / ``Not live until'' & Proxy file for apt missing / Pi clock wrong (see Pi gateway guide). \\
+Mosquitto does not start (Step D) & Password file missing or wrong rights: redo the two \texttt{passwd} lines of Step C. \\
+Dashboard: ``Broker: offline'' & Our broker not running (Step D), wrong IP, or laptop on another network. \\
+Attack scripts: permission / Npcap errors & Run PowerShell as Administrator. \\
+NodeMCU: \texttt{failed (state 5)} & Wrong MQTT user/password in the sketch. \\
+NodeMCU: \texttt{failed (state -2)} & Wrong gateway IP or port, or our broker not running. \\
+\bottomrule
+\end{longtable}
+
+\end{document}

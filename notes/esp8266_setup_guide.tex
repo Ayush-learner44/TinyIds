@@ -1,0 +1,102 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=2cm]{geometry}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{parskip}
+\setlist{itemsep=3pt, topsep=3pt}
+\newcommand{\menu}[1]{\textbf{#1}}
+\newcommand{\ok}{\textcolor{green!50!black}{\textbf{OK}}}
+
+\begin{document}
+
+{\LARGE\bfseries NodeMCU ESP8266: setup and board test}\\[4pt]
+For Windows + Arduino IDE 2.x. Works for both the small NodeMCU (CP2102 chip) and the bigger NodeMCU v3 ``LoLin'' (CH340G chip).
+
+\section*{What is in this folder}
+\begin{tabular}{@{}>{\ttfamily}l l@{}}
+drivers/cp2102/ & USB driver for the \textbf{small} NodeMCU (chip next to USB says CP2102) \\
+drivers/ch340/ & USB driver for the \textbf{bigger} NodeMCU v3 (chip says CH340G) \\
+esp8266\_board\_test/ & Arduino test sketch (prints chip info, MAC, Wi-Fi scan, blinks LED) \\
+\end{tabular}
+
+\section*{0. Install the USB driver (once per PC)}
+Look at the small chip next to the board's USB port.
+\begin{itemize}
+\item \textbf{CP2102:} unzip \texttt{drivers/cp2102/CP210x\_Universal\_Windows\_Driver.zip}, right-click \texttt{silabser.inf} $\rightarrow$ \menu{Show more options} $\rightarrow$ \menu{Install}.
+\item \textbf{CH340 / CH340G:} run \texttt{drivers/ch340/CH341SER.EXE} $\rightarrow$ \menu{INSTALL}.
+\end{itemize}
+Check: plug in the board, open \menu{Device Manager} $\rightarrow$ \menu{Ports (COM \& LPT)}. You should see
+\texttt{Silicon Labs CP210x \dots\ (COMx)} or \texttt{USB-SERIAL CH340 (COMx)} with no yellow warning sign.
+
+\textit{Nothing appears at all?} Your USB cable is probably charge-only. Try a cable that can transfer files to a phone.
+
+\section*{1. Add the ESP8266 board package (once only)}
+\begin{itemize}
+\item \menu{File $\rightarrow$ Preferences $\rightarrow$ Settings}. Next to \menu{Additional boards manager URLs}, click the small window icon.
+\item Keep any existing line (e.g.\ ESP32) and add this on a \textbf{new line}:\\
+\texttt{https://arduino.esp8266.com/stable/package\_esp8266com\_index.json}
+\item Click \menu{OK}, then \menu{OK} again.
+\end{itemize}
+
+\section*{2. Install it}
+\begin{itemize}
+\item \menu{Tools $\rightarrow$ Board $\rightarrow$ Boards Manager}, search \textbf{esp8266}, install \textbf{``esp8266 by ESP8266 Community''}. Takes a few minutes.
+\end{itemize}
+
+\section*{3. Open the test sketch}
+\begin{itemize}
+\item \menu{File $\rightarrow$ Open} $\rightarrow$ \texttt{esp8266\_board\_test/esp8266\_board\_test.ino} (from this folder).
+\end{itemize}
+
+\section*{4. Select board and port}
+\begin{itemize}
+\item Board dropdown (top bar) $\rightarrow$ \menu{Select other board and port\dots}
+\item Search \textbf{NodeMCU 1.0} and choose \textbf{NodeMCU 1.0 (ESP-12E Module)}.
+\item Port: the \textbf{COMx Serial Port (USB)} that appeared when you plugged the board in $\rightarrow$ \menu{OK}.
+\item Untick \menu{Show all ports} if you see extra COM ports: those belong to the PC, not your board.
+\item The bottom bar should now say \textbf{``NodeMCU 1.0 (ESP-12E Module) on COMx''}.
+\end{itemize}
+
+\section*{5. Upload}
+\begin{itemize}
+\item \textbf{Close the Serial Monitor first} if it is open. An open monitor locks the port and causes ``could not open port'' errors.
+\item Click \menu{Upload} ($\rightarrow$). NodeMCU normally uploads by itself.
+\item If it fails with \texttt{Failed to connect}: hold the \textbf{FLASH} button, click Upload, release FLASH when \texttt{Connecting...} appears.
+\item Success looks like: \texttt{Chip is ESP8266EX \dots\ Hash of data verified \dots\ Hard resetting via RTS pin}.
+\end{itemize}
+
+\section*{6. Check the board}
+\begin{itemize}
+\item \menu{Tools $\rightarrow$ Serial Monitor}, set \textbf{9600 baud} (bottom-right dropdown), then press \textbf{RST} on the board.
+The sketch uses \texttt{Serial.begin(9600)}; the monitor must use the \textbf{same} number.
+\item The report is printed \textbf{once at startup}, so if the monitor shows nothing, press RST again.
+\end{itemize}
+\begin{tabular}{@{}l l@{}}
+\ok & Chip ID, flash size and MAC address are printed \\
+\ok & \texttt{PASS: found X networks} \\
+\ok & Blue LED blinks once per second and \texttt{alive, uptime \dots} keeps counting \\
+\end{tabular}
+
+Write the \textbf{MAC address} on a piece of tape on the board (Node 1, Node 2, \dots).
+
+\section*{7. Next board}
+Unplug and plug in the next one. \textbf{The COM number will probably change}, especially between CP2102 and CH340 boards, so re-select the port. Then repeat steps 5--6. The board setting stays.
+
+\section*{Troubleshooting}
+\begin{tabular}{@{}>{\raggedright}p{5.4cm} >{\raggedright\arraybackslash}p{11.2cm}@{}}
+\toprule
+\textbf{Problem} & \textbf{Fix} \\
+\midrule
+No COM port appears & Wrong/missing driver (step 0) or charge-only cable. \\
+Device Manager shows a yellow \textbf{!} & Driver missing: install the one matching the USB chip (step 0). \\
+Gibberish in Serial Monitor & Monitor baud does not match \texttt{Serial.begin(\dots)} in the code. Use \textbf{9600} in both (the speed printed on the back of the NodeMCU). One short line of gibberish right after RST is normal: it is the chip's boot message at 74880 baud. \\
+Monitor is empty & Press RST; the report only prints at startup. \\
+\texttt{could not open port} & Close the Serial Monitor, or another program using the port. \\
+Arduino IDE stuck on the splash screen, or downloads time out \textbf{on the college network} & The college network needs its proxy: \menu{File $\rightarrow$ Preferences $\rightarrow$ Network $\rightarrow$ Manual proxy}, host \texttt{172.31.2.3}, port \texttt{8080}. Switch back to \menu{No proxy} at home. \\
+ESP8266 install fails with a GitHub download timeout & The college proxy blocks GitHub file downloads. Do step 2 once on a phone hotspot (set \menu{No proxy} while on the hotspot). \\
+\bottomrule
+\end{tabular}
+
+\end{document}

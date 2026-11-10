@@ -1,0 +1,240 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=2cm]{geometry}
+\usepackage{amsmath}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{parskip}
+\setlist{itemsep=3pt, topsep=3pt}
+\renewcommand{\arraystretch}{1.25}
+\newcommand{\good}{\textcolor{green!50!black}{\textbf{OK}}}
+\newcommand{\bad}{\textcolor{red!70!black}{\textbf{NO}}}
+\graphicspath{{../model/results_run2/}}
+
+\begin{document}
+
+{\LARGE\bfseries TinyIDS: training run 2 (without \texttt{IAT})}\\[4pt]
+{\large Removing the suspicious feature, a 20\% sample, and RQ1 for two models}\\[2pt]
+Run date: 06 November 2026, laptop CPU (16 cores). Took 20 minutes. Command:
+\texttt{python train\_tinyids.py --sample 0.2 --drop IAT --run-name run2}
+
+\tableofcontents
+
+%% =====================================================================
+\newpage
+\section{Why run 2?}
+Run 1 (all 46 features, full data) left three open questions:
+\begin{enumerate}
+\item \textbf{The \texttt{IAT} (Inter-Arrival Time) feature looked like a shortcut.} SHAP (SHapley Additive exPlanations) rated it about 5$\times$ more important
+than any other feature. Its values in CICIoT2023 look like capture timestamps rather than traffic behaviour, which a live IDS (Intrusion Detection System)
+cannot reproduce. \textbf{Question: how good are the models without it?}
+\item \textbf{LightGBM (Light Gradient Boosting Machine) was oddly worse than Random Forest} on 8 and 34 classes, probably because its learning rate was too high.
+\item \textbf{RQ1} (Research Question 1) found no feature subset within 0.02 of the full model, but only LightGBM was tested and only up to 20 features.
+\end{enumerate}
+
+\section{What changed from run 1}
+\begin{longtable}{@{}>{\raggedright}p{4cm} >{\raggedright}p{5.4cm} >{\raggedright\arraybackslash}p{6.4cm}@{}}
+\toprule
+& \textbf{Run 1} & \textbf{Run 2} \\
+\midrule
+\endhead
+Features & all 46 & \textbf{45}: \texttt{IAT} left out (new \texttt{--drop} option) \\
+Training rows & 5,491,971 (100\%) & \textbf{1,098,395 (20\%)}, stratified: every attack keeps 20\% of its rows \\
+Test rows & 1,176,851 (full) & 1,176,851 (full, unchanged) \\
+LightGBM & learning rate 0.1, max 400 rounds & \textbf{learning rate 0.05}, max 1000 rounds, early stop after 30 \\
+RQ1 & LightGBM only; top 5/10/15/20 & \textbf{LightGBM and Random Forest}; top 5/10/15/20/25/30 \\
+Memory & peaked at 97\% of 15 GB & \textbf{about 3.6 GB}: data tables freed after loading, NN (Neural Network) preprocessing in chunks \\
+Output folders & \texttt{results/}, \texttt{models/} & \texttt{results\_run2/}, \texttt{models\_run2/} (run 1 kept) \\
+Time & 32 min & \textbf{20 min} \\
+\bottomrule
+\end{longtable}
+
+\textbf{Why 20\%?} A full-data run with the slower learning rate was started first, but was going to take until about 10 PM, so it was stopped after 7 models.
+Its partial results (\texttt{training\_run2\_full\_STOPPED.log}) are used in section 5 to check how much the 20\% sample changes the scores.
+
+%% =====================================================================
+\newpage
+\section{Results (test set, 1,176,851 rows)}
+\begin{longtable}{@{}l l r r r r r@{}}
+\toprule
+\textbf{Task} & \textbf{Model} & \textbf{Accuracy} & \textbf{Macro-F1} & \textbf{Benign FPR} & \textbf{Size (KB)} & \textbf{ms/row} \\
+\midrule
+\endhead
+binary & RF & 0.9930 & 0.9322 & 0.0164 & 7,292 & 3.56 \\
+binary & \textbf{LightGBM} & \textbf{0.9945} & \textbf{0.9450} & 0.0346 & 6,667 & 0.77 \\
+binary & MLP & 0.9909 & 0.9158 & 0.0161 & 60 & 0.08 \\
+binary & 1D-CNN & 0.9858 & 0.8792 & 0.0139 & 83 & 0.22 \\
+\midrule
+8-class & RF & 0.9052 & 0.6876 & 0.0806 & 39,464 & 3.66 \\
+8-class & \textbf{LightGBM} & \textbf{0.9099} & \textbf{0.7049} & 0.0720 & 26,916 & 1.27 \\
+8-class & MLP & 0.8724 & 0.6386 & 0.0868 & 62 & 0.09 \\
+8-class & 1D-CNN & 0.8628 & 0.6111 & 0.1335 & 84 & 0.50 \\
+\midrule
+34-class & \textbf{RF} & \textbf{0.8873} & \textbf{0.6472} & 0.0721 & 54,321 & 3.88 \\
+34-class & LightGBM & 0.8863 & 0.6266 & 0.1326 & 9,493 & 0.79 \\
+34-class & MLP & 0.8404 & 0.5534 & 0.1067 & 69 & 0.09 \\
+34-class & 1D-CNN & 0.8301 & 0.5320 & 0.1272 & 91 & 0.18 \\
+\bottomrule
+\end{longtable}
+FPR = False Positive Rate (share of normal traffic flagged as attack). MLP = Multi-Layer Perceptron; 1D-CNN = one-dimensional Convolutional Neural Network; RF = Random Forest.
+
+%% =====================================================================
+\section{Run 1 vs run 2: the effect of removing \texttt{IAT}}
+Best model of each task:
+
+\begin{center}
+\begin{tabular}{@{}l l r r r r@{}}
+\toprule
+& & \multicolumn{2}{c}{\textbf{Run 1 (with IAT)}} & \multicolumn{2}{c}{\textbf{Run 2 (without IAT)}} \\
+\textbf{Task} & \textbf{Model} & Accuracy & Macro-F1 & Accuracy & Macro-F1 \\
+\midrule
+binary & LightGBM & 0.9969 & 0.968 & 0.9945 & 0.945 \\
+8-class & RF / LightGBM & 0.9955 & 0.864 & 0.9099 & 0.705 \\
+34-class & RF & 0.9929 & 0.796 & 0.8873 & 0.647 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{Which classes suffered? (8-class, F1 per class)}
+\begin{center}
+\begin{tabular}{@{}l r r l@{}}
+\toprule
+\textbf{Class} & \textbf{Run 1 RF} & \textbf{Run 2 LightGBM} & \\
+\midrule
+Mirai & 0.999 & 0.997 & unchanged \\
+DDoS & 1.000 & 0.944 & small drop \\
+Benign & 0.943 & 0.898 & small drop \\
+Spoofing & 0.874 & 0.777 & drop \\
+DoS & 1.000 & \textbf{0.748} & \textbf{big drop} \\
+Recon & 0.832 & 0.725 & drop \\
+BruteForce & 0.713 & \textbf{0.362} & \textbf{big drop} \\
+Web & 0.549 & \textbf{0.188} & \textbf{big drop} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{What this means}
+\begin{itemize}
+\item \textbf{``Attack or not'' does not depend on \texttt{IAT}.} Binary accuracy only went from 99.69\% to 99.45\%; attack-class F1 is still 0.997.
+This is the most important result for the live IDS.
+\item \textbf{DDoS vs DoS now get confused.} The only real difference between them is \emph{how many machines} attack; a window of 10--100 packets
+looks almost the same either way. With \texttt{IAT} the model separated them perfectly; without it, it cannot. This strongly suggests
+\texttt{IAT} identified \emph{which capture session} a row came from rather than how the attack behaves, i.e.\ a \textbf{dataset shortcut}.
+\item \textbf{Web and BruteForce collapse} (F1 0.19 and 0.36): with few rows and no \texttt{IAT}, their packet statistics look like normal or Recon traffic.
+\item \textbf{Conclusion:} run 1's 99.5\% 8-class accuracy was \textbf{optimistic}. Run 2 is the honest number for an IDS that must work on live traffic,
+where \texttt{IAT} cannot be reproduced. This is a worthwhile finding for the report.
+\end{itemize}
+
+%% =====================================================================
+\newpage
+\section{Does the 20\% sample change the scores?}
+Comparison with the stopped full-data run (same settings, without \texttt{IAT}, 7 models had finished):
+\begin{center}
+\begin{tabular}{@{}l r r r r@{}}
+\toprule
+& \multicolumn{2}{c}{\textbf{100\% data}} & \multicolumn{2}{c}{\textbf{20\% data}} \\
+\textbf{Model} & Accuracy & Macro-F1 & Accuracy & Macro-F1 \\
+\midrule
+binary RF & 0.9923 & 0.927 & 0.9930 & 0.932 \\
+binary LightGBM & 0.9944 & 0.945 & 0.9945 & 0.945 \\
+binary MLP & 0.9917 & 0.923 & 0.9909 & 0.916 \\
+binary 1D-CNN & 0.9897 & 0.907 & 0.9858 & 0.879 \\
+8-class RF & 0.9055 & 0.720 & 0.9052 & 0.688 \\
+8-class LightGBM & 0.9122 & 0.749 & 0.9099 & 0.705 \\
+8-class MLP & 0.8976 & 0.668 & 0.8724 & 0.639 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\begin{itemize}
+\item \textbf{Binary and accuracy: practically no difference.} 20\% is enough.
+\item \textbf{8-class macro-F1 is 0.03--0.04 lower with 20\%}: the rare classes (Web, BruteForce) have only about 60--600 training rows left.
+\item \textbf{Plan:} experiment with 20\% (fast); do one final full-data run of the chosen setup for the report numbers.
+\end{itemize}
+
+%% =====================================================================
+\section{SHAP feature ranking without \texttt{IAT}}
+\begin{center}
+\includegraphics[width=0.72\textwidth]{rq1_shap_top20.png}
+\end{center}
+With \texttt{IAT} gone, importance is spread much more evenly (top feature 0.37 instead of 1.31). The top features are exactly what a network IDS should use:
+\textbf{protocol} (\texttt{Protocol Type}), \textbf{packet sizes} (\texttt{Tot size}, \texttt{Max}, \texttt{Min}, \texttt{Magnitue}), \textbf{header length},
+\textbf{flow duration}, \textbf{rate} and \textbf{TCP flag counts} (\texttt{syn\_count}, \texttt{ack\_count}, \texttt{rst\_count}).
+All of these can be computed from live packets on the Pi.
+
+%% =====================================================================
+\newpage
+\section{RQ1: how few features are enough?}
+8-class models retrained with the top-$k$ features (ranking above), scored on the full test set:
+
+\begin{center}
+\begin{tabular}{@{}r r r r r@{}}
+\toprule
+& \multicolumn{2}{c}{\textbf{LightGBM}} & \multicolumn{2}{c}{\textbf{Random Forest}} \\
+\textbf{Features} & Macro-F1 & Gap & Macro-F1 & Gap \\
+\midrule
+5 & 0.568 & $-$0.137 & 0.570 & $-$0.118 \\
+10 & 0.645 & $-$0.060 & 0.646 & $-$0.042 \\
+15 & 0.675 & $-$0.030 & 0.659 & $-$0.029 \\
+20 & 0.676 & $-$0.029 & 0.660 & $-$0.027 \\
+25 & 0.676 & $-$0.029 & 0.663 & $-$0.024 \\
+30 & \textbf{0.685} & \textbf{$-$0.020} & 0.666 & $-$0.022 \\
+45 (all) & 0.705 & --- & 0.688 & --- \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{center}
+\includegraphics[width=0.78\textwidth]{rq1_f1_vs_features.png}
+\end{center}
+
+\textbf{Answer from run 2:}
+\begin{itemize}
+\item \textbf{LightGBM: 30 features} keep macro-F1 within 0.02 of all 45 (just on the line).
+\item \textbf{Random Forest:} 30 features are 0.022 short; no subset up to 30 is within 0.02.
+\item The curve rises steeply up to \textbf{15 features}, then flattens: from 15 to 30 features adds only about 0.01.
+\textbf{15 features is the sweet spot} for the Pi (fewer features to compute live, smaller model) at a cost of about 0.03 macro-F1.
+\end{itemize}
+
+%% =====================================================================
+\section{What is good}
+\begin{itemize}
+\item \textbf{Binary detection stays excellent without \texttt{IAT}}: 99.45\% accuracy, attack-class F1 0.997. ``Is this an attack?'' works.
+\item \textbf{Mirai and DDoS floods are still detected very well} (F1 0.997 and 0.944): these cover the hping3 floods of the live demo.
+\item \textbf{The SHAP ranking now makes sense} and every top feature can be computed on the Pi.
+\item \textbf{LightGBM is now the best model} for binary and 8-class (the lower learning rate fixed run 1's problem), and its latency is 0.8--1.3 ms per row.
+\item \textbf{RQ1 has a clear answer for LightGBM} (30 features), and a practical sweet spot (15).
+\item \textbf{Memory is fixed} (3.6 GB instead of 15 GB) and a run takes 20 minutes.
+\end{itemize}
+
+\section{What is not good, and the plan}
+\begin{longtable}{@{}>{\raggedright}p{6cm} >{\raggedright\arraybackslash}p{10cm}@{}}
+\toprule
+\textbf{Problem} & \textbf{Plan} \\
+\midrule
+\endhead
+8-class / 34-class scores dropped a lot without \texttt{IAT} (8-class macro-F1 0.86 $\rightarrow$ 0.70). &
+This is the honest result. For the report: show both runs and explain the shortcut. For the live IDS, use the model \emph{without} \texttt{IAT}. \\
+DDoS and DoS are confused (DoS F1 0.75). &
+Expected: they differ only in the number of attackers. Option: merge them into one ``flood'' class (7 classes), which is also more useful in practice. \\
+Web (F1 0.19) and BruteForce (0.36) are almost undetectable. &
+Too few rows and similar-looking traffic. Option: stronger class weights or oversampling for these two; or report them as a known limitation. \\
+Models are still far too big (7--54 MB vs $<$ 1 MB). &
+Compression step (RQ2): fewer and shallower trees, top-15 features. \\
+Benign false-alarm rate 7--13\% for 8/34-class. &
+Too many normal rows flagged. Will improve with the flood-class merge and tuning; for the live IDS the binary model (1.6--3.5\% FPR) can decide ``attack or not'' first. \\
+20\% sample costs about 0.03--0.04 macro-F1 on 8-class. & Final report numbers from one full-data run. \\
+\bottomrule
+\end{longtable}
+
+\section{Next steps}
+\begin{enumerate}
+\item Decide the final class setup (e.g.\ merge DDoS + DoS) and features (top 15 without \texttt{IAT}).
+\item Compression (RQ2): small LightGBM / RF with top-15 features, export to ONNX (Open Neural Network Exchange); measure size and speed.
+\item Live feature extractor + IDS on the laptop testbed, then on the Pi.
+\item Final full-data training run of the chosen setup.
+\end{enumerate}
+
+\end{document}

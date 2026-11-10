@@ -1,0 +1,235 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=2cm]{geometry}
+\usepackage{amsmath}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{xcolor}
+\usepackage{parskip}
+\setlist{itemsep=3pt, topsep=3pt}
+\renewcommand{\arraystretch}{1.25}
+\setlength{\tabcolsep}{4.5pt}
+\sloppy
+
+\begin{document}
+
+{\LARGE\bfseries TinyIDS: compression and quantization (RQ2)}\\[4pt]
+{\large Tools, steps, and the first test (\texttt{quant1})}\\[2pt]
+07 November 2026. Script: \texttt{model/compress.py}. Results: \texttt{model/results\_quant1/quant\_results.csv}, models: \texttt{model/models\_quant1/}.
+
+\tableofcontents
+
+%% =====================================================================
+\newpage
+\section{Why this step exists}
+The proposal (Methodology step 4) requires shrinking the trained models before they go to the Raspberry Pi:
+\begin{quote}\itshape
+``Prune tree depth and estimator count; convert the MLP/CNN to TensorFlow Lite or ONNX with INT8 quantization. On the Pi, measure model size (KB),
+peak RAM (MB), latency per flow (ms), throughput (flows/s) and energy per 1,000 inferences.''
+\end{quote}
+and RQ2 (Research Question 2) asks: \emph{which compressed model (quantized tree ensemble, pruned MLP, small 1D-CNN) gives the best accuracy per
+millisecond and per megabyte on the Pi?} Run 2's models were 7--54 MB, far above the target of $<$ 1 MB.
+
+\textbf{Terms.}
+\textbf{Pruning} = removing the parts of a model that matter least (fewer / smaller trees; weak neural-network connections).
+\textbf{Quantization} = storing numbers with fewer bits, e.g.\ 32-bit decimals $\rightarrow$ \textbf{INT8} (8-bit integers): about 4$\times$ smaller.
+\textbf{ONNX} = Open Neural Network Exchange, a universal model file format; \textbf{ONNX Runtime} runs ONNX files fast on almost any device, including the Pi.
+\textbf{MLP} = Multi-Layer Perceptron; \textbf{1D-CNN} = one-dimensional Convolutional Neural Network;
+\textbf{LightGBM} = Light Gradient Boosting Machine; \textbf{RF} = Random Forest; \textbf{TFLite} = TensorFlow Lite.
+
+%% =====================================================================
+\section{The tools}
+\begin{longtable}{@{}>{\ttfamily\raggedright}p{3.4cm} >{\raggedright\arraybackslash}p{12.4cm}@{}}
+\toprule
+\textrm{\textbf{Tool (version)}} & \textbf{What it does here} \\
+\midrule
+\endhead
+onnx (1.23) & Reads / writes ONNX model files. \\
+onnxruntime (1.31) & Runs ONNX models; its \texttt{quantization} module does the INT8 conversion. Has a Raspberry Pi (ARM) version, so PyTorch is not needed on the Pi. \\
+torch.onnx (PyTorch 2.15) & Exports the trained MLP / 1D-CNN from PyTorch to ONNX. \\
+onnxmltools (1.16) & Converts LightGBM models to ONNX. \\
+skl2onnx (1.20) & Converts scikit-learn models (Random Forest) to ONNX. \\
+LightGBM \texttt{max\_bin} & LightGBM sorts every feature into at most this many ``bins''; 255 bins = 8 bits. We use 63: coarser thresholds, smaller trees. \\
+\bottomrule
+\end{longtable}
+Installed with \texttt{pip install onnx onnxruntime onnxmltools skl2onnx} (through the college proxy).
+Possible later extras (not used yet): \texttt{treelite} (compiles trees to a small C library), \texttt{hummingbird-ml} (turns trees into tensor operations so they can be INT8-quantized too).
+
+%% =====================================================================
+\section{The steps, per model}
+\subsection*{Neural networks (MLP, 1D-CNN): real INT8 quantization}
+\begin{enumerate}
+\item \textbf{Start}: the PyTorch model from run 2 (45 features, no \texttt{IAT}), 32-bit.
+\item \textbf{Export to ONNX (fp32)}: \texttt{torch.onnx.export(...)}. Same model, new file format; the score must not change.
+\item \textbf{INT8 dynamic}: \texttt{onnxruntime.quantization.quantize\_dynamic(...)}. The \emph{weights} become 8-bit integers; the in-between values
+are converted on the fly while the model runs. Needs no extra data.
+\item \textbf{INT8 static}: \texttt{onnxruntime.quantization.quantize\_static(...)}. Weights \emph{and} in-between values are 8-bit. It first
+runs 1,000 \textbf{calibration} rows from \texttt{train.csv} through the model to learn the value ranges.
+\end{enumerate}
+\textbf{One fix was needed for the 1D-CNN}: its ``adaptive average pooling'' layer (squeezes 45 values into 8) cannot be exported to ONNX when 45 is
+not a multiple of 8. It was replaced at export time by an \textbf{exactly equivalent fixed matrix multiplication}; the script checks on 2,000 rows that
+the outputs are identical before continuing.
+
+\subsection*{Tree models (LightGBM, Random Forest): pruning + coarser numbers + ONNX}
+Trees have no standard ``INT8 button''. For them, a ``quantized tree ensemble'' means fewer trees, smaller trees and coarser numbers inside:
+\begin{enumerate}
+\item \textbf{Start}: the run-2 model (45 features). LightGBM: up to 1,000 rounds, 63 leaves; RF: 100 trees, depth 20.
+\item \textbf{Pruned}: retrained (20\% sample) with only the \textbf{top 15 features} from the run-2 SHAP ranking (RQ1 sweet spot), and
+\begin{itemize}
+\item LightGBM: at most 150 rounds, \textbf{15 leaves} per tree, \textbf{\texttt{max\_bin} 63};
+\item Random Forest: \textbf{30 trees}, \textbf{max depth 12}.
+\end{itemize}
+\item \textbf{Pruned $\rightarrow$ ONNX}: converted with \texttt{onnxmltools} / \texttt{skl2onnx} and run with ONNX Runtime, the same runtime as the neural networks.
+\end{enumerate}
+
+\subsection*{Top-15 features used by the pruned trees}
+\texttt{Protocol Type, Tot size, Header\_Length, Magnitue, Max, Min, Tot sum, flow\_duration, Number, syn\_count, Rate, Variance, urg\_count, ack\_count,
+psh\_flag\_number}
+
+\subsection*{What is measured for every version}
+\begin{itemize}
+\item \textbf{File size (KB)}: target $<$ 1 MB (1,024 KB).
+\item \textbf{Accuracy} and \textbf{macro-F1} on the full \texttt{test.csv} (1,176,851 rows), and the \textbf{F1 change} versus the original model.
+\item \textbf{Latency}: time to classify \textbf{one} window (average over 300 single calls), \textbf{1 CPU core} for the trees, like on the Pi.
+\item \textbf{Throughput}: windows per second when 100,000 windows are classified in one batch.
+\end{itemize}
+These are \textbf{laptop} numbers. The Pi numbers (plus peak RAM and energy with the USB power meter) come from the benchmark script on the Pi later.
+
+
+%% =====================================================================
+\newpage
+\section{First test results (\texttt{quant1})}
+Starting point: the run-2 models (no \texttt{IAT}). Pruned trees retrained on the 20\% sample (1,098,395 rows).
+Every version scored on the \textbf{full} \texttt{test.csv} (1,176,851 rows). Laptop CPU. Took 7 minutes.
+
+\subsection*{Binary (attack or normal)}
+\begin{longtable}{@{}l l r r r r r@{}}
+\toprule
+\textbf{Model} & \textbf{Version} & \textbf{Feat.} & \textbf{Size (KB)} & \textbf{Macro-F1} & \textbf{Change} & \textbf{ms / window} \\
+\midrule
+\endhead
+LightGBM & original & 45 & 6,667 & 0.9450 & --- & 0.710 \\
+LightGBM & pruned & 15 & 260 & 0.9173 & $-$0.028 & 0.681 \\
+LightGBM & \textbf{pruned $\rightarrow$ ONNX} & 15 & \textbf{157} & 0.9173 & $-$0.028 & \textbf{0.019} \\
+\midrule
+RF & original & 45 & 7,292 & 0.9322 & --- & 3.303 \\
+RF & pruned & 15 & 659 & 0.9086 & $-$0.024 & 1.090 \\
+RF & pruned $\rightarrow$ ONNX & 15 & 859 & 0.9086 & $-$0.024 & 0.012 \\
+\midrule
+MLP & original (PyTorch) & 45 & 60 & 0.9158 & --- & 0.036 \\
+MLP & ONNX fp32 & 45 & 57 & 0.9158 & 0.000 & 0.010 \\
+MLP & \textbf{ONNX INT8 dynamic} & 45 & \textbf{18} & \textbf{0.9158} & \textbf{0.000} & 0.013 \\
+MLP & ONNX INT8 static & 45 & 19 & 0.9152 & $-$0.001 & 0.012 \\
+\midrule
+1D-CNN & original (PyTorch) & 45 & 83 & 0.8792 & --- & 0.112 \\
+1D-CNN & ONNX fp32 & 45 & 80 & 0.8792 & 0.000 & 0.034 \\
+1D-CNN & ONNX INT8 dynamic & 45 & 27 & 0.8794 & $+$0.000 & 0.052 \\
+1D-CNN & ONNX INT8 static & 45 & 28 & 0.8803 & $+$0.001 & 0.025 \\
+\bottomrule
+\end{longtable}
+
+\subsection*{8-class (which attack family)}
+\begin{longtable}{@{}l l r r r r r@{}}
+\toprule
+\textbf{Model} & \textbf{Version} & \textbf{Feat.} & \textbf{Size (KB)} & \textbf{Macro-F1} & \textbf{Change} & \textbf{ms / window} \\
+\midrule
+\endhead
+LightGBM & original & 45 & 26,916 & 0.7049 & --- & 1.659 \\
+LightGBM & pruned & 15 & 2,061 & 0.6635 & $-$0.041 & 0.852 \\
+LightGBM & \textbf{pruned $\rightarrow$ ONNX} & 15 & 1,290 & \textbf{0.6635} & $-$0.041 & \textbf{0.019} \\
+\midrule
+RF & original & 45 & 39,464 & 0.6876 & --- & 3.507 \\
+RF & pruned & 15 & 2,273 & 0.6348 & $-$0.053 & 1.144 \\
+RF & pruned $\rightarrow$ ONNX & 15 & 4,012 & 0.6348 & $-$0.053 & 0.015 \\
+\midrule
+MLP & original (PyTorch) & 45 & 62 & 0.6386 & --- & 0.035 \\
+MLP & ONNX fp32 & 45 & 58 & 0.6386 & 0.000 & 0.015 \\
+MLP & \textbf{ONNX INT8 dynamic} & 45 & \textbf{19} & \textbf{0.6397} & $+$0.001 & 0.013 \\
+MLP & ONNX INT8 static & 45 & 19 & 0.5972 & $-$0.042 & 0.017 \\
+\midrule
+1D-CNN & original (PyTorch) & 45 & 84 & 0.6111 & --- & 0.116 \\
+1D-CNN & ONNX fp32 & 45 & 82 & 0.6111 & 0.000 & 0.041 \\
+1D-CNN & ONNX INT8 dynamic & 45 & 28 & 0.6115 & $+$0.000 & 0.074 \\
+1D-CNN & ONNX INT8 static & 45 & 28 & 0.5702 & $-$0.041 & 0.034 \\
+\bottomrule
+\end{longtable}
+``ms / window'' = time to classify one window on the laptop (trees: 1 CPU core). Throughput per batch is in \texttt{quant\_results.csv}.
+
+%% =====================================================================
+\newpage
+\section{A problem found and fixed: INT8 dynamic and big batches}
+In the first attempt, \textbf{INT8 dynamic collapsed}: binary MLP macro-F1 0.916 $\rightarrow$ \textbf{0.023}, 8-class MLP and CNN $\rightarrow$ 0.105,
+while INT8 static was fine (log kept as \texttt{compress\_quant1\_batch-eval.log}).
+
+\textbf{Cause:} a dynamic INT8 model chooses its 8-bit scale \emph{from the whole input it is given}. The test set was given as one batch of 1.18 million rows.
+A handful of rows have extreme values after preprocessing (e.g.\ \texttt{Drate} is almost always 0, so its rare non-zero values become enormous after
+standardisation). Those few rows stretched the scale so much that all other rows were squashed into one or two integer values.
+
+\textbf{Fix:} the live IDS classifies \textbf{each window on its own}, so dynamic models are now scored one window at a time, exactly as they will be used.
+Result: \textbf{no loss at all} (binary MLP 0.9158 $\rightarrow$ 0.9158).
+
+\textbf{Lessons:} (1) never feed a dynamic INT8 model a big mixed batch; (2) later, clip extreme standardised values (e.g.\ to $\pm$10) in the
+preprocessing, which makes both INT8 versions more robust.
+
+%% =====================================================================
+\section{What the first test shows}
+\begin{enumerate}
+\item \textbf{Neural networks: INT8 quantization works almost for free.} MLP 60 KB $\rightarrow$ \textbf{18 KB} (3.3$\times$ smaller) with \textbf{no F1 loss}
+(dynamic). Static INT8 is just as small and the fastest, but loses 0.04 macro-F1 on 8-class (its fixed calibration ranges clip some rows).
+\item \textbf{ONNX alone makes everything much faster.} Trees: 0.7--3.5 ms $\rightarrow$ \textbf{0.01--0.02 ms} per window (35--230$\times$), because ONNX Runtime
+skips Python overhead. Neural networks: 2--4$\times$ faster.
+\item \textbf{Trees: pruning shrinks them a lot}, e.g.\ binary LightGBM 6.7 MB $\rightarrow$ \textbf{157 KB} (42$\times$), 8-class 26.9 MB $\rightarrow$ 1.3 MB (21$\times$).
+\item \textbf{But pruned trees lose accuracy}: binary $-$0.024 to $-$0.028, 8-class $-$0.041 to $-$0.053 macro-F1. Part of this is using only 15 features
+(RQ1 showed 15 features cost about 0.03 on their own), part is the smaller trees.
+\item \textbf{ONNX made Random Forest files bigger} (binary 659 $\rightarrow$ 859 KB; 8-class 2.3 $\rightarrow$ 4.0 MB): \texttt{joblib} compresses its file,
+ONNX does not. LightGBM got smaller in ONNX.
+\end{enumerate}
+
+\subsection*{Against the targets (laptop numbers)}
+\begin{longtable}{@{}>{\raggedright}p{4.2cm} >{\raggedright}p{6.4cm} >{\raggedright\arraybackslash}p{5cm}@{}}
+\toprule
+\textbf{Target} & \textbf{Best result so far} & \textbf{Status} \\
+\midrule
+\endhead
+Model size $<$ 1 MB & Binary: all compressed versions (18--859 KB). 8-class: MLP / CNN INT8 (19--28 KB), LightGBM ONNX 1,290 KB & binary met; 8-class: LightGBM slightly over (1.3 MB), RF well over (4 MB) \\
+Latency $<$ 5 ms per window & every ONNX version $\leq$ 0.07 ms on the laptop & met (re-check on the Pi, 3--5$\times$ slower) \\
+Throughput $\geq$ 500 / s & 13,000 -- 4,000,000 / s & met \\
+F1 loss small & NN INT8 dynamic: 0.000; trees: 0.024--0.053 & NN yes; trees need tuning \\
+\bottomrule
+\end{longtable}
+
+\subsection*{Best candidates for the IDS right now}
+\begin{itemize}
+\item \textbf{Binary}: LightGBM pruned $\rightarrow$ ONNX (157 KB, F1 0.917) or MLP INT8 (18 KB, F1 0.916): same F1, the MLP is 9$\times$ smaller,
+but LightGBM works directly with TreeSHAP for the explanations.
+\item \textbf{8-class}: LightGBM pruned $\rightarrow$ ONNX (1.3 MB, F1 0.664) is the most accurate compressed model; MLP INT8 (19 KB, F1 0.640) the smallest.
+\end{itemize}
+
+\section{Next steps}
+\begin{center}
+\fcolorbox{orange!70!black}{orange!8}{\begin{minipage}{0.94\textwidth}
+\vspace{4pt}
+\textbf{TO DO NEXT for the model (decided 07 Nov 2026; parked while the testbed is built)}
+
+\textbf{Tune the pruned trees} so compression costs less accuracy:
+\begin{itemize}
+\item try \textbf{25--30 features} instead of 15 (RQ1: the curve flattens after 15, but 30 was within 0.02 for LightGBM);
+\item try \textbf{31 leaves per tree} instead of 15;
+\item for 8-class, use \textbf{fewer rounds} (every round adds 8 trees) and/or fewer bins;
+\item \textbf{goal}: macro-F1 loss \textbf{below 0.02} versus the original, and \textbf{every} model \textbf{under 1 MB}.
+\end{itemize}
+Command to re-run after changing the settings in \texttt{compress.py}: \texttt{python compress.py --run-name quant2}
+\vspace{4pt}
+\end{minipage}}
+\end{center}
+
+\begin{enumerate}
+\item (see box) Tune the pruned trees.
+\item Use the \textbf{7-class} family model (DDoS + DoS merged), as planned for the IDS.
+\item Clip extreme preprocessed values for the neural networks.
+\item Run the same comparison \textbf{on the Pi} with peak RAM and energy (\texttt{rq2\_benchmark.py}) $\rightarrow$ final RQ2 table.
+\end{enumerate}
+
+
+\end{document}

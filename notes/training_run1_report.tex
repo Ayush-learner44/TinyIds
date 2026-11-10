@@ -1,0 +1,287 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=2cm]{geometry}
+\usepackage{amsmath}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{parskip}
+\setlist{itemsep=3pt, topsep=3pt}
+\renewcommand{\arraystretch}{1.25}
+\newcommand{\good}{\textcolor{green!50!black}{\textbf{OK}}}
+\newcommand{\bad}{\textcolor{red!70!black}{\textbf{NO}}}
+\graphicspath{{../model/results/}}
+
+\begin{document}
+
+{\LARGE\bfseries TinyIDS: training run 1 (full dataset)}\\[4pt]
+{\large What the training code does, the first results, and what is good and what is not}\\[2pt]
+Run date: 06 November 2026, on the Windows laptop (16 CPU cores, 15 GB RAM). The run took 32 minutes in total. All 12 models, the SHAP ranking and the RQ1 experiment are finished; all numbers below are final.
+
+\tableofcontents
+
+%% =====================================================================
+\newpage
+\section{Files}
+\begin{tabular}{@{}>{\ttfamily}l >{\raggedright\arraybackslash}p{11cm}@{}}
+\toprule
+\textrm{\textbf{File / folder}} & \textbf{What it is} \\
+\midrule
+train\_tinyids.py & The training script (run: \texttt{python train\_tinyids.py}). \\
+train\_tinyids.ipynb & The same code as a Jupyter notebook, with an explanation before every step. Generated from the \texttt{.py}, so both are always identical. \\
+training\_full.log & Everything the script printed during this run, with timestamps. \\
+cache/ & Fast \textbf{Parquet} copies of the three CSV files (made on the first run; later runs load in seconds). \\
+results/ & \texttt{results\_summary.csv} (main table), \texttt{report\_<task>\_<model>.csv} (per-class scores), \texttt{cm\_<task>\_<model>.png} (confusion matrices). \\
+models/ & The trained models: \texttt{.joblib} (Random Forest, LightGBM), \texttt{.txt} (LightGBM, portable), \texttt{.pt} (PyTorch MLP / 1D-CNN). \\
+\bottomrule
+\end{tabular}
+
+\section{What the code does, step by step}
+\begin{enumerate}
+\item \textbf{Load the data}: the \textbf{full} Kaggle split of CICIoT2023 (Canadian Institute for Cybersecurity IoT dataset 2023):
+train 5,491,971 rows, validation 1,176,851, test 1,176,851; 46 features + 1 label. Numbers stored as \texttt{float32}; the few infinite values replaced by 0.
+\item \textbf{Make three label sets}: \textbf{binary} (Benign / Attack), \textbf{8-class} (family) and \textbf{34-class} (exact attack).
+\item \textbf{Handle the class imbalance} with \textbf{square-root class weights} (section 3).
+\item \textbf{Train four models} for each label set: \textbf{RF} (Random Forest), \textbf{LightGBM} (Light Gradient Boosting Machine),
+\textbf{MLP} (Multi-Layer Perceptron) and \textbf{1D-CNN} (one-dimensional Convolutional Neural Network). 12 models in total.
+\item \textbf{Use the validation set} to stop training at the right moment (LightGBM ``early stopping'', and picking the best epoch for MLP / CNN).
+\item \textbf{Score each model on the test set}, which the models never saw during training.
+\item \textbf{Save} every model, table and plot.
+\item \textbf{RQ1} (Research Question 1): rank the features with \textbf{SHAP} (SHapley Additive exPlanations), retrain with the top 5 / 10 / 15 / 20 features, compare with all 46.
+\end{enumerate}
+
+\subsection*{Model settings used}
+\begin{tabular}{@{}l >{\raggedright\arraybackslash}p{12.4cm}@{}}
+\toprule
+\textbf{Model} & \textbf{Settings} \\
+\midrule
+Random Forest & 100 trees, max depth 20, each tree trained on 500,000 rows drawn from the full training set \\
+LightGBM & up to 400 boosting rounds, learning rate 0.1, 63 leaves per tree, early stopping after 20 rounds without improvement \\
+MLP & 46 $\rightarrow$ 128 $\rightarrow$ 64 $\rightarrow$ classes, 3 epochs, Adam optimiser, batch 4096 \\
+1D-CNN & 2 convolution layers (32 filters, width 3) $\rightarrow$ 64 $\rightarrow$ classes, 3 epochs \\
+\bottomrule
+\end{tabular}
+
+For MLP and 1D-CNN the features are first transformed with $\mathrm{sign}(x)\cdot\log(1+|x|)$ and standardised using the mean and standard deviation
+of the \textbf{training set only} (as the proposal requires), because values range from 0--1 (flags) to millions (\texttt{Rate}).
+
+%% =====================================================================
+\section{How the imbalance is handled}
+DDoS is 73\% of all rows; BruteForce is 0.03\%. A model trained naively learns ``always DDoS'' and still scores 73\% accuracy.
+\begin{itemize}
+\item \textbf{Undersampling} (throwing away most DDoS rows) was \textbf{not} used, because the full dataset was wanted.
+\item \textbf{Class weights} were used: every row is kept, but mistakes on rare classes cost more during training.
+\item The fully ``balanced'' weight $N/(K\cdot n_c)$ gives the rarest classes a weight of about 1,000 and makes training unstable.
+We use its \textbf{square root} (``tempered'' weighting): rare classes count about 30$\times$ more than DDoS.
+\item The main score is \textbf{macro-F1}, where every class counts equally, so a model cannot look good by only getting DDoS right.
+\end{itemize}
+
+%% =====================================================================
+\newpage
+\section{Results (test set, 1,176,851 rows)}
+
+\begin{longtable}{@{}l l r r r r r r@{}}
+\toprule
+\textbf{Task} & \textbf{Model} & \textbf{Accuracy} & \textbf{Macro-F1} & \textbf{Benign} & \textbf{Size} & \textbf{Latency} & \textbf{Train} \\
+ & & & & \textbf{FPR} & \textbf{(KB)} & \textbf{(ms/row)} & \textbf{(s)} \\
+\midrule
+\endhead
+binary  & RF     & 0.9961 & 0.9607 & 0.0027 & 6,860  & 7.43 & 44 \\
+binary  & \textbf{LightGBM} & \textbf{0.9969} & \textbf{0.9677} & 0.0098 & 2,668  & 1.15 & 43 \\
+binary  & MLP    & 0.9918 & 0.9232 & 0.0084 & 61     & 0.14 & 70 \\
+binary  & 1D-CNN & 0.9914 & 0.9200 & 0.0138 & 83     & 0.31 & 234 \\
+\midrule
+8-class & \textbf{RF} & \textbf{0.9955} & \textbf{0.8638} & 0.0427 & 33,612 & 7.87 & 48 \\
+8-class & LightGBM & 0.9954 & 0.8161 & 0.0445 & 10,642 & 1.76 & 176 \\
+8-class & MLP    & 0.8995 & 0.6721 & 0.0748 & 62     & 0.15 & 74 \\
+8-class & 1D-CNN & 0.8816 & 0.6366 & 0.1420 & 84     & 0.67 & 259 \\
+\midrule
+34-class & \textbf{RF} & \textbf{0.9929} & \textbf{0.7961} & 0.0392 & 46,152 & 9.24 & 78 \\
+34-class & LightGBM & 0.9895 & 0.7128 & 0.1106 & 4,269 & 1.49 & 158 \\
+34-class & MLP    & 0.8598 & 0.5929 & 0.1211 & 70     & 0.14 & 76 \\
+34-class & 1D-CNN & 0.8523 & 0.5658 & 0.1284 & 91 & 0.39 & 242 \\
+\bottomrule
+\end{longtable}
+
+\begin{itemize}
+\item \textbf{Benign FPR} (False Positive Rate) = share of normal (benign) traffic wrongly flagged as an attack. Lower is better.
+\item \textbf{Size} = saved model file; \textbf{Latency} = time to classify one single row on the laptop; \textbf{Train} = training time.
+\item Batch throughput (many rows at once) was 35,000 to 3,000,000 rows/s for all models, far above the target of 500 flows/s.
+\end{itemize}
+
+\subsection*{Per-class results: binary, LightGBM}
+\begin{tabular}{@{}l r r r r@{}}
+\toprule
+\textbf{Class} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} & \textbf{Test rows} \\
+\midrule
+Attack & 0.9998 & 0.9970 & \textbf{0.9984} & 1,149,142 \\
+Benign & 0.8891 & 0.9902 & 0.9369 & 27,709 \\
+\bottomrule
+\end{tabular}
+
+\subsection*{Per-class results: 8-class, Random Forest (best 8-class model)}
+\begin{tabular}{@{}l r r r r@{}}
+\toprule
+\textbf{Class} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} & \textbf{Test rows} \\
+\midrule
+DDoS & 0.9999 & 0.9996 & 0.9997 & 855,981 \\
+DoS & 0.9996 & 0.9995 & 0.9996 & 204,245 \\
+Mirai & 0.9996 & 0.9993 & 0.9995 & 66,749 \\
+Benign & 0.9295 & 0.9573 & 0.9432 & 27,709 \\
+Spoofing & 0.8924 & 0.8571 & 0.8743 & 12,410 \\
+Recon & 0.8169 & 0.8467 & 0.8315 & 8,812 \\
+BruteForce & 0.9250 & 0.5799 & 0.7129 & 319 \\
+Web & 0.7078 & 0.4489 & \textbf{0.5494} & 626 \\
+\bottomrule
+\end{tabular}
+
+\subsection*{Weakest classes: 34-class, Random Forest}
+\begin{tabular}{@{}l r r r@{}}
+\toprule
+\textbf{Attack} & \textbf{Recall} & \textbf{F1} & \textbf{Test rows} \\
+\midrule
+Uploading\_Attack & 0.061 & 0.108 & 33 \\
+Backdoor\_Malware & 0.191 & 0.293 & 89 \\
+Recon-PingSweep & 0.208 & 0.293 & 53 \\
+XSS & 0.214 & 0.331 & 103 \\
+SqlInjection & 0.230 & 0.337 & 148 \\
+BrowserHijacking & 0.358 & 0.482 & 134 \\
+CommandInjection & 0.403 & 0.530 & 119 \\
+DictionaryBruteForce & 0.505 & 0.640 & 319 \\
+\bottomrule
+\end{tabular}
+
+All the weak ones are \textbf{tiny classes} (33 to 319 test rows). The flood attacks are almost perfect.
+
+%% =====================================================================
+\newpage
+\section{Confusion matrices}
+Rows = true class, columns = predicted class, each row sums to 1. A perfect model has 1.00 on the diagonal.
+
+\begin{center}
+\includegraphics[width=0.42\textwidth]{cm_binary_lgbm.png}\hfill
+\includegraphics[width=0.55\textwidth]{cm_8class_rf.png}
+\end{center}
+Left: binary LightGBM. Right: 8-class Random Forest. Only 45\% of Web attacks are recognised: 25\% are mistaken for Spoofing,
+22\% for Recon and 8\% for Benign. BruteForce: 58\% correct, 20\% mistaken for Recon, 11\% for Spoofing, 10\% for Benign.
+The big families (DDoS, DoS, Mirai) are at 1.00.
+All other confusion matrices (including 34-class) are in \texttt{model/results/}.
+
+%% =====================================================================
+\section{Against the proposal's targets}
+\begin{longtable}{@{}>{\raggedright}p{3.6cm} >{\raggedright}p{2.6cm} >{\raggedright}p{6.4cm} >{\raggedright\arraybackslash}p{2.6cm}@{}}
+\toprule
+\textbf{Target} & \textbf{Required} & \textbf{Run 1 (best model)} & \textbf{Met?} \\
+\midrule
+\endhead
+Binary F1 & $\geq$ 0.98 & Attack-class F1 \textbf{0.998}; macro-F1 (Attack + Benign averaged) 0.968 & \good\ / partly \\
+Model size & $<$ 1 MB & Trees 2.7--46 MB; MLP / CNN 61--84 KB & \bad\ for trees \\
+Latency per flow & $<$ 5 ms & LightGBM 1.2--1.8 ms, MLP/CNN $<$ 0.7 ms, RF 7--9 ms (laptop) & \good\ except RF \\
+Throughput & $\geq$ 500 flows/s & 35,000+ rows/s in batches & \good \\
+8-class within 2\% (RQ1) & macro-F1 within 0.02 of all 46 & best: 15 features, 0.027 below & \bad\ (close) \\
+SHAP time per alert & $<$ 50 ms & not measured yet & --- \\
+\bottomrule
+\end{longtable}
+Note: the Pi 4 is roughly 3--5$\times$ slower than this laptop, so latency must be measured again on the Pi.
+
+%% =====================================================================
+\newpage
+\section{What is good}
+\begin{itemize}
+\item \textbf{Binary detection works very well}: 99.7\% accuracy, attack-class F1 0.998, and RF flags only 0.27\% of normal traffic as attacks.
+\item \textbf{The attacks of the live demo are detected almost perfectly}: DDoS, DoS and Mirai floods have F1 $\approx$ 0.9996.
+SYN / UDP floods (hping3) fall in these families.
+\item \textbf{Using the full dataset was fast}: the whole run took about 30 minutes (training is done once; afterwards the saved models are just loaded).
+\item \textbf{Tree models beat the neural networks}, as expected for table data, and they are what TreeSHAP explains best.
+\item \textbf{MLP and 1D-CNN are already tiny} (61--84 KB) and very fast, so they meet the size target without any compression.
+\item The pipeline is complete and reproducible: one command trains, scores and saves everything.
+\end{itemize}
+
+\section{What is not good (yet), and the plan}
+\begin{longtable}{@{}>{\raggedright}p{6.2cm} >{\raggedright\arraybackslash}p{9.8cm}@{}}
+\toprule
+\textbf{Problem} & \textbf{Why / plan} \\
+\midrule
+\endhead
+\textbf{Rare classes are weak}: Web (F1 0.55), BruteForce (0.71), Recon (0.83); in 34-class some attacks have recall below 25\%. &
+Only 33--626 test rows, and these attacks look like normal web traffic in packet statistics. Plan: try stronger class weights for 8-class; report honestly.
+None of them is in the live demo except MQTT brute force. \\
+\textbf{Tree models are too big} (2.7--46 MB vs target $<$ 1 MB). & Expected before compression (that is RQ2). Plan: fewer and shallower trees, top-k features from RQ1. \\
+\textbf{Random Forest single-row latency 7--9 ms} ($>$ 5 ms). & 100 deep trees. Compression (above) will cut this; LightGBM is already 1.2--1.8 ms. \\
+\textbf{LightGBM is worse than RF on 8 and 34 classes}, and its 34-class benign false-alarm rate is high (11\%). &
+Unusual; probably the learning rate (0.1) is too high for many classes with weights. Plan: retrain with a lower learning rate. \\
+\textbf{MLP / 1D-CNN are clearly weaker} (8-class macro-F1 0.64--0.67) and have higher false-alarm rates. &
+Only 3 epochs and very small networks. Acceptable: they are mainly the comparison point for RQ2. \\
+\textbf{Binary macro-F1 0.968 is below 0.98} if the target means macro-F1. & The Benign class (2.4\% of rows) has precision 0.89: some attack rows are classified as benign. Attack-class F1 is 0.998. Clarify which F1 the target means. \\
+\textbf{Likely ``shortcut'' feature \texttt{IAT}} (Inter-Arrival Time). & \textbf{Confirmed on the full data:} SHAP importance of \texttt{IAT} is 1.31, about 5$\times$ the next feature (\texttt{Protocol Type}, 0.27). Its values in this dataset look like capture timestamps rather than traffic behaviour, so the model may partly recognise \emph{when/where} a capture was made instead of \emph{what} the attack does; a live IDS cannot reproduce that. Plan: retrain without \texttt{IAT} and compare. \\
+\textbf{Memory reached 97\%} of 15 GB during training. & The script holds several copies of the data at once. Plan: free memory between steps before the next run. \\
+\bottomrule
+\end{longtable}
+
+\section{SHAP feature ranking (first part of RQ1)}
+Mean absolute SHAP value of each feature for the 8-class LightGBM model (3,000 validation rows). Higher = more influence on the decision.
+
+\begin{center}
+\begin{tabular}{@{}r l r @{\hspace{1.2cm}} r l r@{}}
+\toprule
+\textbf{\#} & \textbf{Feature} & \textbf{SHAP} & \textbf{\#} & \textbf{Feature} & \textbf{SHAP} \\
+\midrule
+1 & \texttt{IAT} & \textbf{1.313} & 11 & \texttt{Tot sum} & 0.111 \\
+2 & \texttt{Protocol Type} & 0.267 & 12 & \texttt{urg\_count} & 0.099 \\
+3 & \texttt{Min} & 0.238 & 13 & \texttt{rst\_count} & 0.093 \\
+4 & \texttt{Max} & 0.197 & 14 & \texttt{ack\_count} & 0.090 \\
+5 & \texttt{Header\_Length} & 0.194 & 15 & \texttt{Variance} & 0.088 \\
+6 & \texttt{Tot size} & 0.164 & 16 & \texttt{AVG} & 0.088 \\
+7 & \texttt{Rate} & 0.137 & 17 & \texttt{syn\_count} & 0.081 \\
+8 & \texttt{Number} & 0.136 & 18 & \texttt{syn\_flag\_number} & 0.079 \\
+9 & \texttt{Magnitue} & 0.123 & 19 & \texttt{fin\_count} & 0.063 \\
+10 & \texttt{flow\_duration} & 0.118 & 20 & \texttt{ICMP} & 0.054 \\
+\bottomrule
+\end{tabular}
+\end{center}
+After \texttt{IAT}, the ranking makes sense for a network IDS: protocol, packet sizes, rate and TCP flag counts.
+
+\newpage
+\section{RQ1 result: how few features are enough?}
+LightGBM (8-class) retrained with only the top-$k$ features of the SHAP ranking, scored on the full test set:
+
+\begin{center}
+\begin{tabular}{@{}r r r l@{}}
+\toprule
+\textbf{Features ($k$)} & \textbf{Macro-F1} & \textbf{Gap to all 46} & \textbf{Within 0.02?} \\
+\midrule
+5  & 0.7347 & $-$0.081 & no \\
+10 & 0.7677 & $-$0.048 & no \\
+15 & \textbf{0.7894} & $-$0.027 & no (closest) \\
+20 & 0.7872 & $-$0.029 & no \\
+46 (all) & 0.8161 & --- & reference \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{center}
+\includegraphics[width=0.7\textwidth]{rq1_f1_vs_features.png}
+\end{center}
+
+\textbf{Answer from run 1:} none of the reduced sets stayed within 0.02 of the full 46-feature model. The best was \textbf{15 features}
+(macro-F1 0.789, 0.027 below), and going from 15 to 20 brought no further gain. Top-15 features:
+\texttt{IAT, Protocol Type, Min, Max, Header\_Length, Tot size, Rate, Number, Magnitue, flow\_duration, Tot sum, urg\_count, rst\_count, ack\_count, Variance}.
+
+\textbf{Caveats:}
+\begin{itemize}
+\item The reference model (8-class LightGBM, 0.816) is itself weaker than Random Forest (0.864) in this run; with a better-tuned model the picture may change.
+\item The gap between 15 and 46 features comes almost entirely from the rare classes (Web, BruteForce); the large classes are near-perfect with few features.
+\item \texttt{IAT} is first in every top-$k$ set; RQ1 must be repeated without it (see the \texttt{IAT} problem above).
+\item Steps of 5 are coarse: also testing 25 and 30 features would show where the curve reaches the 0.02 line.
+\end{itemize}
+
+\section{Next steps}
+\begin{enumerate}
+\item Retrain without \texttt{IAT} and repeat RQ1 (also with 25 and 30 features, and with Random Forest as the reference).
+\item Retrain LightGBM with a lower learning rate; reduce memory use.
+\item Compression for RQ2: smaller trees, export to ONNX (Open Neural Network Exchange) / TFLite (TensorFlow Lite), measure on the Pi.
+\end{enumerate}
+
+\end{document}

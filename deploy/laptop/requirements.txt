@@ -1,0 +1,4 @@
+scapy
+paho-mqtt>=2.0
+streamlit
+pandas

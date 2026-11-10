@@ -1,0 +1,5 @@
+#!/bin/sh
+# TCP SYN port scan of the broker's first 1000 ports. Usage: port_scan [port-range]
+PORTS=${1:-1-1000}
+echo "Port scan -> $TARGET ports $PORTS"
+nmap -sS -Pn -T4 -p "$PORTS" "$TARGET"

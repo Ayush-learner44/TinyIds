@@ -1,0 +1,70 @@
+{
+  "features": [
+    "flow_duration",
+    "Header_Length",
+    "Protocol Type",
+    "Rate",
+    "fin_flag_number",
+    "syn_flag_number",
+    "rst_flag_number",
+    "psh_flag_number",
+    "ack_flag_number",
+    "ece_flag_number",
+    "cwr_flag_number",
+    "HTTP",
+    "HTTPS",
+    "DNS",
+    "Telnet",
+    "SMTP",
+    "SSH",
+    "IRC",
+    "TCP",
+    "UDP",
+    "DHCP",
+    "ARP",
+    "ICMP",
+    "IPv",
+    "LLC",
+    "Min",
+    "Max",
+    "AVG",
+    "Std",
+    "Tot size"
+  ],
+  "trained": "2026-11-07",
+  "train_rows": 1098395,
+  "windows": {
+    "Flood": 100,
+    "Mirai": 100,
+    "Benign": 10,
+    "Recon": 10,
+    "Spoofing": 10,
+    "Web": 10,
+    "BruteForce": 10
+  },
+  "binary": {
+    "file": "binary.txt",
+    "classes": [
+      "Attack",
+      "Benign"
+    ],
+    "test_accuracy": 0.9906,
+    "test_macro_f1": 0.9121,
+    "size_kb": 1014.4
+  },
+  "family": {
+    "file": "family.txt",
+    "classes": [
+      "Benign",
+      "BruteForce",
+      "Flood",
+      "Mirai",
+      "Recon",
+      "Spoofing",
+      "Web"
+    ],
+    "test_accuracy": 0.9888,
+    "test_macro_f1": 0.6661,
+    "size_kb": 7031.7
+  }
+}
