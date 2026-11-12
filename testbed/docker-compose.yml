@@ -35,17 +35,13 @@ services:
         ipv4_address: 172.30.0.10
 
   ids:                         # TinyIDS: shares the broker's network, sees exactly what the Pi would see
-    build: ./ids
+    build: {context: .., dockerfile: testbed/ids/Dockerfile}      # same code as the Pi (deploy/pi)
     restart: unless-stopped
     network_mode: "service:broker"
     depends_on: [broker]
     cap_add: [NET_ADMIN, NET_RAW]
     environment:
       TZ: IST-5:30
-      IFACE: eth0
-      MY_IP: 172.30.0.10
-      MQTT_USER: tinyids
-      MQTT_PASS: tinyids123
     volumes:
       - ./models/current:/models:ro
 
@@ -73,14 +69,13 @@ services:
         ipv4_address: 172.30.0.66
 
   dashboard:
-    build: ./dashboard
+    build: {context: .., dockerfile: testbed/dashboard/Dockerfile}  # same file as the laptop dashboard
     restart: unless-stopped
     depends_on: [broker]
     environment:
       TZ: IST-5:30
       BROKER: 172.30.0.10
-      MQTT_USER: tinyids
-      MQTT_PASS: tinyids123
+      MQTT_PORT: "1883"
     ports:
       - "8501:8501"
     networks:

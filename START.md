@@ -17,9 +17,10 @@ Proposal: `TinyIDS_Proposal.pdf`. Full history and numbers: `TINYIDS_CHANGES_AND
 | Folder | What it is |
 |---|---|
 | `model/` | Offline ML: `train_tinyids.py` (RF, LightGBM, MLP, 1D-CNN; binary / 8-class / 34-class; RQ1 SHAP feature ranking), `compress.py` (pruning + ONNX + INT8, RQ2), `make_ids_models.py` (trains the 2 models the live IDS uses) |
-| `testbed/` | Docker testbed on one machine: broker, 3 fake sensors, IDS, attacker, dashboard (`docker-compose.yml`) |
+| `deploy/pi/` | **The live detector** (`run_tinyids.py` + package `tinyids/`). ONE copy of the code, used on the Pi AND in Docker. All numbers in `tinyids/settings.py` |
+| `deploy/laptop/` | Dashboard (`dashboard.py`, also used in Docker), attack scripts, NodeMCU bot master |
+| `testbed/` | Docker testbed on one machine: broker, 3 fake sensors (can become bots), IDS, attacker, dashboard (`docker-compose.yml`) |
 | `testbed/models/current/` | **The models the live IDS loads**: `binary.txt`, `family.txt` (LightGBM), `meta.json` (feature list + classes) |
-| `deploy/` | Same IDS for the real Raspberry Pi + NodeMCU + laptop (`deploy/deploy.pdf`) |
 | `notes/` | PDF explanations (dataset classes/features, project explained, testbed design, guides) |
 
 ## 2. Dataset (not in the repo, too big)
@@ -55,7 +56,7 @@ Important findings so far:
 ## 5. Replacing the model the live IDS uses (the contract)
 The IDS loads `testbed/models/current/`:
 - `binary.txt`, `family.txt` = LightGBM boosters; `meta.json` = `features` (exact order), `binary.classes`, `family.classes`, `windows`.
-- **Only these 30 live features may be used** (the live extractor `testbed/ids/features.py` computes exactly these): see `LIVE_FEATURES` in `model/make_ids_models.py`. Features like `IAT, Duration, Number, Weight, Variance, *_count, Tot sum, Magnitue, Radius, Covariance, Srate, Drate` are excluded on purpose.
+- **Only these 30 live features may be used** (the live extractor `deploy/pi/tinyids/features.py` computes exactly these): see `LIVE_FEATURES` in `model/make_ids_models.py`. Features like `IAT, Duration, Number, Weight, Variance, *_count, Tot sum, Magnitue, Radius, Covariance, Srate, Drate` are excluded on purpose.
 - To test a new model: train with the same feature list, save in the same format, copy into `testbed/models/current/`, then `docker compose restart ids`.
 
 ## 6. Run the Docker testbed
@@ -83,10 +84,19 @@ Checked against the actual training results (`model/results_run2`, `model/result
 | RQ2 "157 KB LGBM, 858 KB RF: < 1 MB PASSED" | These are the **binary** pruned models. The 8-class pruned models were 1,290 KB (LightGBM ONNX) and 4,012 KB (RF ONNX). The **live IDS family model `testbed/models/current/family.txt` is ~7 MB** (not compressed). So < 1 MB is met only for binary. |
 | RQ3 "SHAP 22–26 ms on Pi 4" | A **projection**, not measured. Measured on the Pi (07 Nov, full model): 46–96 ms. |
 | SHAP with `num_iteration=80` keeps "identical top-3" | The family model has ~298 rounds; SHAP from only the first 80 explains a truncated model, not the one that made the decision. Verify the top-3 match on a test set before claiming it. |
-| "0.00% false alarms" after calibration | Not tested on real hardware yet. |
+| "0.00% false alarms" after calibration | The calibration feature was broken (compared packet size with cumulative header bytes) and was **removed in v3**. |
+
+Branch `v3` replaced the mitigation code: the calibration, the Python "token bucket" (it only made the IDS stop looking) and the
+`cmd/bot` "stop" message are gone. What v3 does after an alert (`deploy/pi/tinyids/response.py`), all real `iptables` rules:
+sure attack from an outside machine -> block 30 s; from one of our sensors -> quarantine 120 s; unsure -> rate-limit to 20 packets/s.
+"Flood" alerts are named DoS (1 sender) or DDoS (>= 3 senders flooding within 10 s). Tested in Docker on 12 Nov 2026:
+idle 60 s = 0 alerts; SYN flood, UDP flood -> DoS flood + block; port scan -> Recon + block; MQTT brute force -> rule + block;
+3 sensor bots -> DDoS flood (3 senders) + 3 quarantines.
 
 ## 8. Known issues / open items for the AI/ML work
-- False alarms on normal low-rate MQTT traffic (dataset benign traffic looks different). Ideas: add recorded testbed benign windows to training, calibration, hysteresis.
-- SHAP time per alert ~46–96 ms on the Pi with the full family model (target < 50 ms).
-- `testbed/ids/mitigation.py` and `deploy/pi/tinyids/mitigation.py` (lines ~192) still publish a `{"command":"stop"}` "counter-disarm" on `cmd/bot`. **The project owner does not want this feature; leave it disabled / do not rely on it.**
-- The 4 mitigation features (`mitigation_extra_features.txt`) are not yet tested by the owner.
+- **Slow senders are not classified by the model** (windows that are not full after 5 s are dropped, because 2-packet windows
+  gave false alarms). Planned fix: record benign + attack windows from our own testbed with the live extractor, ADD them to
+  CICIoT2023 for the live model (do not replace the dataset's benign rows), then classify half-full windows again.
+- The live models are not compressed yet: `family.txt` is ~7 MB (target < 1 MB). Tune the pruned trees (see `model/compress.py`).
+- SHAP time per alert ~46–96 ms on the Pi with the full family model (target < 50 ms); `--shap-rounds 80` is faster but
+  explains only part of the model. Measure on the Pi.

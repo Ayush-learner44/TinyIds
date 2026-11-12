@@ -1,9 +1,11 @@
 """TinyIDS dashboard: live sensors, traffic, alerts and the top-3 SHAP reasons of each alert.
 
-Run on the laptop:   streamlit run dashboard.py -- 172.29.1.135          (the Pi's IP; port 1884 by default)
+Laptop:  streamlit run dashboard.py -- 172.29.1.135          (the Pi's IP; port 1884 by default)
+Docker:  started by testbed/docker-compose.yml (broker address from the BROKER / MQTT_PORT settings)
 """
 import argparse
 import json
+import os
 import threading
 import time
 from collections import deque
@@ -15,8 +17,8 @@ import streamlit as st
 st.set_page_config(page_title="TinyIDS", layout="wide")
 
 parser = argparse.ArgumentParser()
-parser.add_argument("broker", nargs="?", default="127.0.0.1", help="IP of the Pi")
-parser.add_argument("--port", type=int, default=1884)
+parser.add_argument("broker", nargs="?", default=os.environ.get("BROKER", "127.0.0.1"), help="IP of the Pi")
+parser.add_argument("--port", type=int, default=int(os.environ.get("MQTT_PORT", "1884")))
 parser.add_argument("--user", default="tinyids")
 parser.add_argument("--password", default="tinyids123")
 ARGS = parser.parse_args()
@@ -32,8 +34,13 @@ ATTACK_COLORS = {
 }
 
 
+def color_of(attack, default):
+    """'DoS flood' and 'DDoS flood (3 senders)' use the Flood color."""
+    return ATTACK_COLORS.get("Flood" if "flood" in attack.lower() else attack, default)
+
+
 def style_attack(val):
-    color = ATTACK_COLORS.get(val, "#94A3B8")
+    color = color_of(val, "#94A3B8")
     return f"background-color: {color}25; color: {color}; font-weight: 700; border-left: 3px solid {color}; padding-left: 6px;"
 
 
@@ -117,28 +124,22 @@ def live():
 
     # ---------------------------------------------------------------- Mitigation & IPS Controls
     mitigation = dict(s.get("mitigation", {}))
-    ips_on = mitigation.get("ips_mode", True)
+    has_status = bool(mitigation)                      # nothing received yet = the IDS is not running
+    ips_on = mitigation.get("ips_mode", False)
     blocked = mitigation.get("blocked", [])
     quarantined = mitigation.get("quarantined", [])
-    throttled = mitigation.get("throttled", [])
-    calibrated = mitigation.get("calibrated", False)
+    rate_limited = mitigation.get("rate_limited", [])
     history = mitigation.get("history", [])
 
     st.markdown("<hr style='margin: 15px 0; border: none; border-top: 1px solid #334155;' />", unsafe_allow_html=True)
-    m_head, m_c1, m_c2, m_c3 = st.columns([3, 1.4, 1.6, 1.2])
+    m_head, m_c1, m_c3 = st.columns([3.6, 1.6, 1.2])
     with m_head:
         st.subheader("🛡️ Active Defense & Edge Mitigation (IPS)")
     with m_c1:
-        ips_label = "🟢 IPS Mode: ON" if ips_on else "🔴 IPS Mode: OFF"
+        ips_label = ("🟢 IPS Mode: ON" if ips_on else "🔴 IPS Mode: OFF") if has_status else "⚪ IPS: no status yet"
         if st.button(ips_label, key="toggle_ips_btn", help="Toggle between passive IDS (detection only) and active IPS (firewall DROP)"):
             if s["client"]:
                 s["client"].publish("cmd/mitigation", json.dumps({"action": "toggle_ips", "enabled": not ips_on}))
-            st.rerun()
-    with m_c2:
-        calib_label = "⚡ Calibrate Baseline" if not calibrated else "✅ Calibrated (0% FP)"
-        if st.button(calib_label, key="calib_btn", help="Learn sensor baseline for 20s to eliminate false alarms"):
-            if s["client"]:
-                s["client"].publish("cmd/mitigation", json.dumps({"action": "calibrate", "duration": 20}))
             st.rerun()
     with m_c3:
         if st.button("🔓 Flush Bans", key="flush_bans_btn", help="Clear all firewall bans"):
@@ -151,16 +152,16 @@ def live():
         st.markdown("**Active Firewall Bans & Quarantined Nodes**")
         ban_rows = []
         for b in blocked:
-            ban_rows.append({"Type": "⛔ IP Banned", "Target": b["ip"], "Reason": b["reason"], "Expires in": f"{b['remaining']}s"})
+            ban_rows.append({"Type": "⛔ Blocked", "Target": b["ip"], "Reason": b["reason"], "Expires in": f"{b['remaining']}s"})
         for q in quarantined:
-            ban_rows.append({"Type": "⚠️ Bot Quarantined", "Target": f"{q['node']} ({q['ip']})", "Reason": q["reason"], "Expires in": "Active"})
-        for t in throttled:
-            ban_rows.append({"Type": "⏳ Throttled (5pps)", "Target": t["ip"], "Reason": "Borderline anomaly", "Expires in": f"{t['remaining']}s"})
+            ban_rows.append({"Type": "⚠️ Sensor quarantined", "Target": f"{q['node']} ({q['ip']})", "Reason": q["reason"], "Expires in": f"{q['remaining']}s"})
+        for r in rate_limited:
+            ban_rows.append({"Type": "⏳ Rate-limited", "Target": r["ip"], "Reason": r["reason"], "Expires in": f"{r['remaining']}s"})
         
         if ban_rows:
             st.dataframe(pd.DataFrame(ban_rows), hide_index=True, use_container_width=True)
         else:
-            st.info("No active bans or throttles. All legitimate traffic flowing normally.")
+            st.info("No active blocks or rate limits.")
 
     with m_right:
         st.markdown("**Live Mitigation Action Log**")
@@ -207,7 +208,7 @@ def live():
             cols = st.columns(2)
             for col_idx, (name, a) in enumerate(row_items):
                 with cols[col_idx]:
-                    color = ATTACK_COLORS.get(name, "#38BDF8")
+                    color = color_of(name, "#38BDF8")
                     st.markdown(
                         f"<div style='border-left: 4px solid {color}; padding-left: 12px; margin-bottom: 8px;'>"
                         f"<span style='font-size: 1.18rem; font-weight: 700; color: {color};'>{name}</span> "

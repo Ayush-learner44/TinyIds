@@ -36,13 +36,14 @@ class WindowCollector:
             w.large = []
         return full
 
-    def close_old(self):
-        """Slow senders (like a sensor) never fill a window; flush windows older than the timeout.
-        Discard partial windows with < 10 packets to prevent statistical distortion and false alarms."""
-        now, closed = time.time(), []
-        for sender, w in self.senders.items():
+    def drop_old(self):
+        """Throw away windows that are not full after the timeout.
+
+        A sensor sends 1 packet every 2 s, so its window never fills. Classifying a 2-packet window gives
+        nonsense features and false alarms, so it is dropped. KNOWN LIMITATION: senders slower than
+        ~2 packets/s are never classified by the model (the brute-force rule still sees them).
+        Fix planned: retrain with benign windows recorded from our own testbed."""
+        now = time.time()
+        for w in self.senders.values():
             if w.started and now - w.started > self.timeout:
-                if len(w.small) >= self.small_size:
-                    closed.append((sender, w.small, self.small_size))
                 w.small, w.large, w.started = [], [], None
-        return closed
