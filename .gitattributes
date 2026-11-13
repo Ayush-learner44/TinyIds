@@ -1,0 +1,3 @@
+# shell scripts must keep Linux line endings (they run on the Pi and in Docker)
+*.sh text eol=lf
+laptop/testbed/attacker/attacks/* text eol=lf

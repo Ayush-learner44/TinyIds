@@ -1,0 +1,38 @@
+binary:  7 leaves, rate 0.1, 300 rounds ->    271 KB, validation macro-F1 0.8972
+binary:  7 leaves, rate 0.2, 300 rounds ->    269 KB, validation macro-F1 0.9057
+binary:  7 leaves, rate 0.3,  69 rounds ->     64 KB, validation macro-F1 0.8925
+binary: 15 leaves, rate 0.1, 300 rounds ->    520 KB, validation macro-F1 0.9067
+binary: 15 leaves, rate 0.2, 300 rounds ->    516 KB, validation macro-F1 0.9112
+binary: 15 leaves, rate 0.3, 253 rounds ->    434 KB, validation macro-F1 0.9127
+binary: 31 leaves, rate 0.1, 288 rounds ->    974 KB, validation macro-F1 0.9127
+=== binary CHOSEN: 31 leaves, rate 0.1, 288 rounds, 974 KB | test accuracy 0.9905, macro-F1 0.9120
+              precision    recall  f1-score   support
+
+      Attack      0.999     0.991     0.995   1149142
+      Benign      0.721     0.974     0.829     27709
+
+    accuracy                          0.991   1176851
+   macro avg      0.860     0.983     0.912   1176851
+weighted avg      0.993     0.991     0.991   1176851
+
+family:  7 leaves, rate 0.1, 156 rounds ->    974 KB, validation macro-F1 0.6405
+family:  7 leaves, rate 0.2, 125 rounds ->    776 KB, validation macro-F1 0.6459
+family:  7 leaves, rate 0.3,  34 rounds ->    212 KB, validation macro-F1 0.6096
+family: 15 leaves, rate 0.1,  80 rounds ->    967 KB, validation macro-F1 0.6362
+family: 15 leaves, rate 0.2,  25 rounds ->    302 KB, validation macro-F1 0.6179
+family: 15 leaves, rate 0.3,  17 rounds ->    205 KB, validation macro-F1 0.6142
+family: 31 leaves, rate 0.1,  41 rounds ->    971 KB, validation macro-F1 0.6335
+=== family CHOSEN: 7 leaves, rate 0.2, 125 rounds, 776 KB | test accuracy 0.9868, macro-F1 0.6432
+              precision    recall  f1-score   support
+
+      Benign      0.792     0.880     0.834     27709
+  BruteForce      0.178     0.279     0.217       319
+       Flood      1.000     0.997     0.998   1060226
+       Mirai      0.996     0.993     0.995     66749
+       Recon      0.577     0.679     0.624      8812
+    Spoofing      0.728     0.624     0.672     12410
+         Web      0.130     0.217     0.162       626
+
+    accuracy                          0.987   1176851
+   macro avg      0.629     0.667     0.643   1176851
+weighted avg      0.988     0.987     0.987   1176851

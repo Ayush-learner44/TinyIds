@@ -1,4 +1,4 @@
-"""Train the two models the live IDS uses and export them to testbed/models/current/.
+"""Train the two models the live IDS uses and export them to pi/models/ (the live models of the Pi and the Docker testbed).
 
   binary.txt  : attack or normal
   family.txt  : which family (7 classes: DDoS and DoS merged into "Flood")
@@ -23,7 +23,7 @@ import pandas as pd
 from sklearn.metrics import accuracy_score, f1_score, classification_report
 
 HERE = Path(__file__).resolve().parent
-OUT = HERE.parent / "testbed" / "models" / "current"
+OUT = HERE.parent / "pi" / "models"
 OUT.mkdir(parents=True, exist_ok=True)
 
 LIVE_FEATURES = [

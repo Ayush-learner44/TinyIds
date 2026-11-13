@@ -12,16 +12,15 @@ Trained experiment models (`model/models*/`) are not in the repo; they are regen
 
 ## 1. What this project is
 TinyIDS = a lightweight, explainable intrusion detection system (IDS) for IoT gateways (Raspberry Pi 4).
-Proposal: `TinyIDS_Proposal.pdf`. Full history and numbers: `TINYIDS_CHANGES_AND_STATUS_REPORT.md` (some numbers in it were written by another AI; verify before quoting).
+Proposal: `docs/TinyIDS_Proposal.pdf`. Full history and numbers: `docs/TINYIDS_CHANGES_AND_STATUS_REPORT.md` (some numbers in it were written by another AI; verify before quoting).
 
 | Folder | What it is |
 |---|---|
-| `model/` | Offline ML: `train_tinyids.py` (RF, LightGBM, MLP, 1D-CNN; binary / 8-class / 34-class; RQ1 SHAP feature ranking), `compress.py` (pruning + ONNX + INT8, RQ2), `make_ids_models.py` (trains the 2 models the live IDS uses) |
-| `deploy/pi/` | **The live detector** (`run_tinyids.py` + package `tinyids/`). ONE copy of the code, used on the Pi AND in Docker. All numbers in `tinyids/settings.py` |
-| `deploy/laptop/` | Dashboard (`dashboard.py`, also used in Docker), attack scripts, NodeMCU bot master |
-| `testbed/` | Docker testbed on one machine: broker, 3 fake sensors (can become bots), IDS, attacker, dashboard (`docker-compose.yml`) |
-| `testbed/models/current/` | **The models the live IDS loads**: `binary.txt`, `family.txt` (LightGBM), `meta.json` (feature list + classes) |
-| `notes/` | PDF explanations (dataset classes/features, project explained, testbed design, guides) |
+| `model/` | Offline ML: `train_tinyids.py` (RF, LightGBM, MLP, 1D-CNN; binary / 8-class / 34-class; RQ1 SHAP feature ranking), `compress.py` (pruning + ONNX + INT8, RQ2), `make_ids_models.py` (trains the 2 models the live IDS uses), `make_small_models.py` (< 1 MB versions) |
+| `pi/` | **The live detector** (`run_tinyids.py` + package `tinyids/`) and its models (`pi/models/`). ONE copy, used on the Pi AND in Docker. All numbers in `tinyids/settings.py` |
+| `laptop/` | Dashboard (`dashboard.py`, also used in Docker), attack scripts, NodeMCU bot firmware + master, Docker testbed (`laptop/testbed/`) |
+| `docs/` | Proposal, reports, PDF guides, results |
+| `pi/models/` | **The models the live IDS loads**: `binary.txt`, `family.txt` (LightGBM), `meta.json` (feature list + classes) |
 
 ## 2. Dataset (not in the repo, too big)
 CICIoT2023, pre-split Kaggle copy: https://www.kaggle.com/datasets/himadri07/ciciot2023
@@ -44,7 +43,7 @@ Docker Desktop must be running for the testbed.
 ```
 cd model
 python train_tinyids.py --sample 0.2 --drop IAT --run-name run2       # ~20 min on CPU -> models_run2/, results_run2/
-python make_ids_models.py                                            # writes testbed/models/current/
+python make_ids_models.py                                            # writes pi/models/
 python compress.py --run-name quant1                                 # optional: compression / INT8 tests (needs run2 first)
 ```
 Important findings so far:
@@ -54,14 +53,14 @@ Important findings so far:
 - 20% stratified sample gives almost the same scores as full data (8-class macro-F1 ~0.03 lower).
 
 ## 5. Replacing the model the live IDS uses (the contract)
-The IDS loads `testbed/models/current/`:
+The IDS loads `pi/models/`:
 - `binary.txt`, `family.txt` = LightGBM boosters; `meta.json` = `features` (exact order), `binary.classes`, `family.classes`, `windows`.
-- **Only these 30 live features may be used** (the live extractor `deploy/pi/tinyids/features.py` computes exactly these): see `LIVE_FEATURES` in `model/make_ids_models.py`. Features like `IAT, Duration, Number, Weight, Variance, *_count, Tot sum, Magnitue, Radius, Covariance, Srate, Drate` are excluded on purpose.
-- To test a new model: train with the same feature list, save in the same format, copy into `testbed/models/current/`, then `docker compose restart ids`.
+- **Only these 30 live features may be used** (the live extractor `pi/tinyids/features.py` computes exactly these): see `LIVE_FEATURES` in `model/make_ids_models.py`. Features like `IAT, Duration, Number, Weight, Variance, *_count, Tot sum, Magnitue, Radius, Covariance, Srate, Drate` are excluded on purpose.
+- To test a new model: train with the same feature list, save in the same format, copy into `pi/models/`, then (in `laptop/testbed`) `docker compose restart ids`.
 
 ## 6. Run the Docker testbed
 ```
-cd testbed
+cd laptop/testbed
 docker compose up -d --build
 ```
 Open http://localhost:8501 (dashboard). Attacks (inside the private Docker network only):
@@ -81,13 +80,13 @@ Checked against the actual training results (`model/results_run2`, `model/result
 | Report says | Reality |
 |---|---|
 | RQ1 "top-30 within 1.95%" (0.6854 vs 0.7049, 8-class LightGBM) | Correct numbers, but that is 1.95 **points**; as a relative drop it is 2.8%. Say which definition you use. |
-| RQ2 "157 KB LGBM, 858 KB RF: < 1 MB PASSED" | These are the **binary** pruned models. The 8-class pruned models were 1,290 KB (LightGBM ONNX) and 4,012 KB (RF ONNX). The **live IDS family model `testbed/models/current/family.txt` is ~7 MB** (not compressed). So < 1 MB is met only for binary. |
+| RQ2 "157 KB LGBM, 858 KB RF: < 1 MB PASSED" | These are the **binary** pruned models. The 8-class pruned models were 1,290 KB (LightGBM ONNX) and 4,012 KB (RF ONNX). The **live IDS family model `pi/models/family.txt` is ~7 MB** (not compressed). So < 1 MB is met only for binary. |
 | RQ3 "SHAP 22–26 ms on Pi 4" | A **projection**, not measured. Measured on the Pi (07 Nov, full model): 46–96 ms. |
 | SHAP with `num_iteration=80` keeps "identical top-3" | The family model has ~298 rounds; SHAP from only the first 80 explains a truncated model, not the one that made the decision. Verify the top-3 match on a test set before claiming it. |
 | "0.00% false alarms" after calibration | The calibration feature was broken (compared packet size with cumulative header bytes) and was **removed in v3**. |
 
 Branch `v3` replaced the mitigation code: the calibration, the Python "token bucket" (it only made the IDS stop looking) and the
-`cmd/bot` "stop" message are gone. What v3 does after an alert (`deploy/pi/tinyids/response.py`), all real `iptables` rules:
+`cmd/bot` "stop" message are gone. What v3 does after an alert (`pi/tinyids/response.py`), all real `iptables` rules:
 sure attack from an outside machine -> block 30 s; from one of our sensors -> quarantine 120 s; unsure -> rate-limit to 20 packets/s.
 "Flood" alerts are named DoS (1 sender) or DDoS (>= 3 senders flooding within 10 s). Tested in Docker on 12 Nov 2026:
 idle 60 s = 0 alerts; SYN flood, UDP flood -> DoS flood + block; port scan -> Recon + block; MQTT brute force -> rule + block;
@@ -97,6 +96,11 @@ idle 60 s = 0 alerts; SYN flood, UDP flood -> DoS flood + block; port scan -> Re
 - **Slow senders are not classified by the model** (windows that are not full after 5 s are dropped, because 2-packet windows
   gave false alarms). Planned fix: record benign + attack windows from our own testbed with the live extractor, ADD them to
   CICIoT2023 for the live model (do not replace the dataset's benign rows), then classify half-full windows again.
-- The live models are not compressed yet: `family.txt` is ~7 MB (target < 1 MB). Tune the pruned trees (see `model/compress.py`).
+- The live models are not compressed yet: `family.txt` is ~7 MB (target < 1 MB). `model/make_small_models.py` makes < 1 MB
+  versions (`pi/models_small/`: binary 974 KB same score; family 776 KB, macro-F1 0.643 vs 0.666) BUT in the Docker test
+  the small family models called our sensor-bot UDP flood "Recon/Spoofing 0.5-0.7" instead of "Flood 1.00". So they are
+  not live yet. Fix idea: add our own recorded testbed windows to training, then shrink.
+- v4 (13 Nov 2026): new rule `pi/tinyids/address_watcher.py`: ARP spoofing (same IP, new MAC) and IP-spoofed floods
+  (one MAC, many source IPs) -> block the MAC + repair the ARP entry. Attacks: `spoofed_flood syn|udp`, `arp_spoof`.
 - SHAP time per alert ~46–96 ms on the Pi with the full family model (target < 50 ms); `--shap-rounds 80` is faster but
   explains only part of the model. Measure on the Pi.
