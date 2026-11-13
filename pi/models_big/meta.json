@@ -31,7 +31,7 @@
     "Std",
     "Tot size"
   ],
-  "trained": "2026-11-13",
+  "trained": "2026-11-07",
   "train_rows": 1098395,
   "windows": {
     "Flood": 100,
@@ -48,12 +48,9 @@
       "Attack",
       "Benign"
     ],
-    "test_accuracy": 0.9905,
-    "test_macro_f1": 0.912,
-    "size_kb": 974.0,
-    "num_leaves": 31,
-    "learning_rate": 0.1,
-    "rounds": 288
+    "test_accuracy": 0.9906,
+    "test_macro_f1": 0.9121,
+    "size_kb": 1014.4
   },
   "family": {
     "file": "family.txt",
@@ -66,11 +63,8 @@
       "Spoofing",
       "Web"
     ],
-    "test_accuracy": 0.9868,
-    "test_macro_f1": 0.6432,
-    "size_kb": 775.9,
-    "num_leaves": 7,
-    "learning_rate": 0.2,
-    "rounds": 125
+    "test_accuracy": 0.9888,
+    "test_macro_f1": 0.6661,
+    "size_kb": 7031.7
   }
 }

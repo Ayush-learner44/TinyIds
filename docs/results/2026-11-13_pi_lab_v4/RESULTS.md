@@ -44,6 +44,37 @@ and on a hotspot; if OK, make models_small the live model (meets < 1 MB, < 5 ms,
 Likely cause: libraries, not the model (scapy alone ~50-70 MB, plus numpy, lightgbm, paho). Measure at home with
 `tracemalloc` / import-by-import; fixes to try: `from scapy.layers...` instead of `scapy.all`, drop unused imports,
 sniff with a raw socket or `AsyncSniffer` light config, measure the 7 MB model too.
+### RAM analysis at home (13 Nov evening, Docker ids image, same Python code; static RSS after loading)
+| Part | RSS added |
+|---|---|
+| Python | 8.6 MB |
+| numpy | +16.6 |
+| lightgbm | +33.6 (of which scipy.sparse 26.9 MB, never used by us) |
+| paho-mqtt | +0.8 |
+| `from scapy.all import ...` | +49.6 (only-needed scapy modules: +38.8) |
+| our tinyids code | +0.2 |
+| 7 MB models / small models (+1 SHAP call) | +23 / +12 |
+Totals: now (scapy.all + 7 MB) 132 MB (Pi live: 128 MB); scapy-light + small 109.5 MB;
+scapy-light + small + no scipy 98.2 MB (predictions and SHAP identical, checked on 200 rows).
+Live process adds a few MB (threads, flow table) -> must re-measure live in Docker and on the Pi.
+
+### RAM fixes done (13 Nov evening) and LIVE result in Docker (peak = VmHWM of the IDS process)
+1. small models are now the default (`pi/models`; old 7 MB ones in `pi/models_big`)
+2. `run_tinyids.py` imports only the scapy parts it uses (not `scapy.all`)
+3. `tinyids/no_scipy.py`: lightgbm gets an empty scipy stand-in (predictions + SHAP identical)
+4. FlowTable and WindowCollector keep at most 2,000 entries (least recently active forgotten first) - floods made
+   every packet a "new connection" and RAM grew 98 -> 122 MB
+| | before | after 1-3 | after 1-4 |
+|---|---|---|---|
+| idle | 132 (static) | 98 | 98 |
+| after SYN / UDP flood | - | 110 / 122 | 101 / 101 |
+| after spoofed SYN + UDP floods (peak) | - | 122 | 110 |
+All attacks still detected in Docker after the changes: SYN/UDP flood (DoS 1.00), port scan (Recon by rule 1.00),
+brute force (rule 1.00), spoofed floods (IP spoofing), ARP spoofing. Bot UDP flood with the small model: still
+"Spoofing 0.5" for all 3 bots (same as before; NOT fixed by these changes).
+Pi measured 4 MB less than Docker earlier (128 vs 132) -> expected on Pi ~94 MB idle, ~97 MB after normal floods,
+~106 MB peak after spoofed floods. MUST be measured on the Pi.
+
 Not done today: full RQ2 benchmark (`benchmark/rq2_benchmark.py`), energy (no USB meter), UDP flood, spoofing on the Pi.
 
 ## Problems found and FIXED in the lab

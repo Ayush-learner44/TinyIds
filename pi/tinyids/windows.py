@@ -19,10 +19,14 @@ class WindowCollector:
         self.large_size = large_size
         self.timeout = timeout
         self.senders = {}
+        self.max_senders = 2000                         # keeps RAM small during spoofed floods
 
     def add(self, packet_info):
         """Add one packet. Returns the windows that just became full: list of (sender, packets, size)."""
-        w = self.senders.setdefault(packet_info.source, SenderWindows())
+        w = self.senders.pop(packet_info.source, None) or SenderWindows()
+        if len(self.senders) >= self.max_senders:
+            del self.senders[next(iter(self.senders))]   # spoofed flood (a new fake sender per packet): forget the quietest
+        self.senders[packet_info.source] = w            # most recent sender at the end
         if w.started is None:
             w.started = time.time()
         w.small.append(packet_info)

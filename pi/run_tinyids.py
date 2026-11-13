@@ -14,7 +14,10 @@ import threading
 import time
 import traceback
 
-from scapy.all import conf, get_if_addr, get_if_hwaddr, getmacbyip, sniff
+from scapy.arch import get_if_addr, get_if_hwaddr            # only the scapy parts we use
+from scapy.config import conf                                 # ("from scapy.all" loads everything: +11 MB RAM)
+from scapy.layers.l2 import getmacbyip
+from scapy.sendrecv import sniff
 from scapy.layers.inet import IP
 
 from tinyids.address_watcher import AddressWatcher

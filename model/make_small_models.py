@@ -6,7 +6,7 @@ The size of a LightGBM file grows with (number of trees) x (leaves per tree). So
 validation macro-F1. Same 30 live features, same classes, same file format: the IDS code does not change.
 
 Run: python make_small_models.py        (needs cache/*.parquet, about 5 minutes on CPU; LightGBM does not use the GPU here)
-Output: ../pi/models_small/ (binary.txt, family.txt, meta.json, report.txt)
+Output: ../pi/models/ (the live models) (binary.txt, family.txt, meta.json, report.txt)
 """
 import json
 import time
@@ -49,7 +49,7 @@ def sample(df, frac, seed):
     return df.iloc[np.sort(np.concatenate(keep))].reset_index(drop=True)
 
 HERE = Path(__file__).resolve().parent
-OUT = HERE.parent / "pi" / "models_small"     # NOT live yet: worse than the big model on our live bot traffic
+OUT = HERE.parent / "pi" / "models"     # the LIVE models (Pi + Docker); old 7 MB ones are in pi/models_big
 OUT.mkdir(parents=True, exist_ok=True)
 MAX_BYTES = 1_000_000                     # "< 1 MB"
 SETTINGS_TO_TRY = [(7, 0.1), (7, 0.2), (7, 0.3), (15, 0.1), (15, 0.2), (15, 0.3), (31, 0.1)]   # (leaves, learning rate)

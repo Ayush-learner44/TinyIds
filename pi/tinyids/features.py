@@ -28,13 +28,23 @@ class PacketInfo:
 
 
 class FlowTable:
-    """Running numbers per connection (both directions share one entry)."""
+    """Running numbers per connection (both directions share one entry).
 
-    def __init__(self):
-        self.flows = {}
+    At most `max_flows` connections are remembered (keeps RAM small during floods, where every packet is a
+    "new connection"). When full, the connection that was quiet the longest is forgotten first, so the
+    sensors (a packet every 2 s) are never the ones dropped."""
+
+    def __init__(self, max_flows=2000):
+        self.max_flows = max_flows
+        self.flows = {}                                 # oldest activity first (Python dicts keep order)
 
     def update(self, key, now, header_bytes):
-        flow = self.flows.setdefault(key, {"first": now, "packets": 0, "header_bytes": 0, "last": now})
+        flow = self.flows.pop(key, None)                # take it out ...
+        if flow is None:
+            flow = {"first": now, "packets": 0, "header_bytes": 0, "last": now}
+            if len(self.flows) >= self.max_flows:
+                del self.flows[next(iter(self.flows))]  # forget the connection quiet the longest
+        self.flows[key] = flow                          # ... and put it back at the end = most recent
         flow["packets"] += 1
         flow["header_bytes"] += header_bytes
         flow["last"] = now

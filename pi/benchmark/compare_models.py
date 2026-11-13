@@ -1,4 +1,4 @@
-"""Compare the live models (models/, 7 MB) with the small ones (models_small/, < 1 MB) ON THE PI.
+"""Compare the old 7 MB models (models_big/) with the small live ones (models/, < 1 MB) ON THE PI.
 
 No network traffic: uses 2,000 test windows from bench_data.npz (CICIoT2023 test set).
 For each model folder: file sizes, model time per window, SHAP time per alert, and how often the
@@ -39,7 +39,7 @@ def ms_per_call(function, rows, repeat):
 
 
 answers = {}
-for folder in ("models", "models_small"):
+for folder in ("models_big", "models"):
     X, binary, family = load(folder)
     size_kb = [(ROOT / folder / f).stat().st_size / 1024 for f in ("binary.txt", "family.txt")]
     model_mean, model_p95 = ms_per_call(lambda r: (binary.predict(r), family.predict(r)), X, 300)
@@ -50,5 +50,5 @@ for folder in ("models", "models_small"):
     print(f"  model time  : {model_mean:.2f} ms per window (95% under {model_p95:.2f} ms)")
     print(f"  SHAP time   : {shap_mean:.2f} ms per alert  (95% under {shap_p95:.2f} ms)")
 
-same = (answers["models"] == answers["models_small"]).mean() * 100
+same = (answers["models_big"] == answers["models"]).mean() * 100
 print(f"\nsmall family model gives the same class as the big one on {same:.1f}% of 2,000 test windows")

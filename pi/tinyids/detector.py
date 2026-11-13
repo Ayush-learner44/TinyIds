@@ -8,6 +8,7 @@ import json
 import time
 from dataclasses import dataclass, field
 
+from tinyids import no_scipy  # noqa: F401  (must come before lightgbm: saves ~27 MB RAM)
 import lightgbm as lgb
 import numpy as np
 
