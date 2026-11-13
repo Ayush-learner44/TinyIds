@@ -1,0 +1,19 @@
+task,model,variant,accuracy,macro_f1,benign_false_alarm,size_kb,latency_ms,train_s
+binary,mlp,full (fp32),0.9924,0.9275,0.0191,186.6,0.129,75.8
+binary,mlp,edge: INT8 (50k rows),0.9918,0.919,0.0266,58.2,0.417,0.0
+binary,mlp,fp32 on same 50k,0.9917,0.9189,0.0257,186.6,0.0,0.0
+binary,cnn,full (fp32),0.9933,0.9351,0.0198,260.9,0.266,566.7
+binary,cnn,edge: INT8 (50k rows),0.9929,0.9288,0.0292,81.4,0.446,0.0
+binary,cnn,fp32 on same 50k,0.9927,0.9269,0.0275,260.9,0.0,0.0
+8class,mlp,full (fp32),0.8965,0.6809,0.1034,189.6,0.106,130.4
+8class,mlp,edge: INT8 (50k rows),0.8975,0.6713,0.1125,58.9,0.449,0.0
+8class,mlp,fp32 on same 50k,0.8984,0.6746,0.1081,189.6,0.0,0.0
+8class,cnn,full (fp32),0.9038,0.686,0.0892,263.9,0.251,834.9
+8class,cnn,edge: INT8 (50k rows),0.9065,0.6867,0.1027,82.2,0.461,0.0
+8class,cnn,fp32 on same 50k,0.9058,0.6778,0.0983,263.9,0.0,0.0
+34class,mlp,full (fp32),0.8809,0.642,0.1293,202.7,0.123,268.6
+34class,mlp,edge: INT8 (50k rows),0.8809,0.6519,0.1355,62.3,0.389,0.0
+34class,mlp,fp32 on same 50k,0.8827,0.6548,0.1337,202.7,0.0,0.0
+34class,cnn,full (fp32),0.8706,0.6155,0.0987,277.0,0.237,514.6
+34class,cnn,edge: INT8 (50k rows),0.8718,0.6208,0.0974,85.5,0.455,0.0
+34class,cnn,fp32 on same 50k,0.8711,0.6203,0.1001,277.0,0.0,0.0

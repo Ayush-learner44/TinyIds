@@ -1,0 +1,3 @@
+task,model,variant,accuracy,macro_f1,benign_false_alarm,size_kb,latency_ms,train_s
+34class,lgbm,full (60 rds),0.888,0.6382,0.1204,13618.5,0.238,75.5
+34class,lgbm,edge: <1MB (13 rds),0.8766,0.5888,0.1772,751.3,0.067,15.1

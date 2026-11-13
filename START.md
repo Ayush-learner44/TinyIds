@@ -12,7 +12,7 @@ Trained experiment models (`model/models*/`) are not in the repo; they are regen
 
 ## 1. What this project is
 TinyIDS = a lightweight, explainable intrusion detection system (IDS) for IoT gateways (Raspberry Pi 4).
-Proposal: `docs/TinyIDS_Proposal.pdf`. Full history and numbers: `docs/TINYIDS_CHANGES_AND_STATUS_REPORT.md` (some numbers in it were written by another AI; verify before quoting).
+Proposal: `docs/TinyIDS_Proposal.pdf`. Measured results: `docs/results/` (Pi lab runs) and `model/fresh/` (fresh training table).
 
 | Folder | What it is |
 |---|---|
@@ -75,16 +75,7 @@ docker compose logs -f ids          # alerts
 docker compose down                 # stop
 ```
 
-## 7. Claims in TINYIDS_CHANGES_AND_STATUS_REPORT.md to treat with care
-Checked against the actual training results (`model/results_run2`, `model/results_quant1`):
-| Report says | Reality |
-|---|---|
-| RQ1 "top-30 within 1.95%" (0.6854 vs 0.7049, 8-class LightGBM) | Correct numbers, but that is 1.95 **points**; as a relative drop it is 2.8%. Say which definition you use. |
-| RQ2 "157 KB LGBM, 858 KB RF: < 1 MB PASSED" | These are the **binary** pruned models. The 8-class pruned models were 1,290 KB (LightGBM ONNX) and 4,012 KB (RF ONNX). The **live IDS family model `pi/models/family.txt` is ~7 MB** (not compressed). So < 1 MB is met only for binary. |
-| RQ3 "SHAP 22–26 ms on Pi 4" | A **projection**, not measured. Measured on the Pi (07 Nov, full model): 46–96 ms. |
-| SHAP with `num_iteration=80` keeps "identical top-3" | The family model has ~298 rounds; SHAP from only the first 80 explains a truncated model, not the one that made the decision. Verify the top-3 match on a test set before claiming it. |
-| "0.00% false alarms" after calibration | The calibration feature was broken (compared packet size with cumulative header bytes) and was **removed in v3**. |
-
+## 7. What the IDS does after an alert
 Branch `v3` replaced the mitigation code: the calibration, the Python "token bucket" (it only made the IDS stop looking) and the
 `cmd/bot` "stop" message are gone. What v3 does after an alert (`pi/tinyids/response.py`), all real `iptables` rules:
 sure attack from an outside machine -> block 30 s; from one of our sensors -> quarantine 120 s; unsure -> rate-limit to 20 packets/s.

@@ -32,7 +32,7 @@ iptables had to be installed on the Pi (`sudo apt -o Acquire::http::Proxy=http:/
 ## Open work, in order (user wants to do these at home, Docker testbed first)
 1. UDP flood took the Pi off the network (285 pps, port 5683). Reproduce in Docker, try lower rates / ICMP rate limit / iptables UDP limit; next Pi test on phone hotspot or Ethernet. Bot UDP flood with the small model also untested live.
 2. RAM: TinyIDS = ~128 MB RSS on the Pi (target < 100 MB). Find what uses it in the Docker ids container (import by import), cut (e.g. scapy.all -> specific layers), then re-measure on the Pi (`ps -eo rss,args | grep run_tinyids`).
-3. RQ2 benchmark `pi/benchmark/rq2_benchmark.py` has NEVER run on the Pi (Gemini's "60-85 MB / PASSED" numbers are not measured). Run on next lab visit (~2 min). Sizes from the laptop are fine.
+3. RQ2 benchmark `pi/benchmark/rq2_benchmark.py` has NEVER run on the Pi. Run on next lab visit (~2 min). Sizes from the laptop are fine.
 4. Laptop attacks only ~300 pps (scapy one packet at a time) -> batch sending.
 5. False alarms on NodeMCUs at boot/reconnect (low confidence 0.3-0.7) and "Recon" labels on bots after TCP floods -> record own traffic, add to training (friend), retrain small model.
 6. setup_pi.sh: install iptables; NodeMCU without hard-coded Pi IP (optional).
@@ -43,5 +43,5 @@ iptables had to be installed on the Pi (`sudo apt -o Acquire::http::Proxy=http:/
 - Explain simply; keep code simple (small classes, simple names) — the prof may ask to explain it.
 - In the lab: ONE step at a time, every command in its own box, say "one command"; wait for output.
 - Record every result and fix in RESULTS.md as it happens.
-- Be honest about what is measured vs projected; don't trust old Gemini numbers without checking.
+- Be honest about what is measured vs projected; only quote numbers we measured ourselves (the old unmeasured report was deleted on 13 Nov).
 - Never push / commit without being asked; private files stay out of git.
