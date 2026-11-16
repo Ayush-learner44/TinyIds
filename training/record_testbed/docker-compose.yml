@@ -1,0 +1,78 @@
+# Recording testbed for retrain/ (step 3). Separate from laptop/testbed: own project name and own network.
+# Start: docker compose -p retrain up -d --build      Stop: docker compose -p retrain down
+# Recording: bash record_all.sh   (CSV files land in retrain/data/)
+
+name: retrain
+
+networks:
+  recnet:
+    ipam:
+      config:
+        - subnet: 172.28.60.0/24
+
+x-sensor: &sensor
+  build: ./sensors
+  restart: unless-stopped
+  depends_on: [broker]
+  environment: &sensor_env
+    BROKER: 172.28.60.10
+    MQTT_USER: tinyids
+    MQTT_PASS: tinyids123
+
+services:
+  broker:                      # the Pi's Mosquitto
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    command: sh -c "rm -f /tmp/passwd && mosquitto_passwd -c -b /tmp/passwd tinyids tinyids123 && chmod 0700 /tmp/passwd && chown mosquitto /tmp/passwd && mosquitto -c /mosquitto/config/mosquitto.conf"
+    volumes:
+      - ./broker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    networks:
+      recnet:
+        ipv4_address: 172.28.60.10
+
+  recorder:                    # sees exactly what the Pi would see (shares the broker's network card)
+    build: {context: ../.., dockerfile: training/record_testbed/recorder/Dockerfile}
+    network_mode: "service:broker"
+    depends_on: [broker]
+    cap_add: [NET_RAW]
+    volumes:
+      - ../data:/data
+
+  ids:                         # step 5: the NEW detector, sees what the Pi would see
+    build: {context: ../.., dockerfile: training/record_testbed/ids/Dockerfile}
+    restart: unless-stopped
+    network_mode: "service:broker"
+    depends_on: [broker]
+    cap_add: [NET_ADMIN, NET_RAW]
+    volumes:
+      - ../../pi/models/top14:/models:ro           # the chosen model (14 features)
+
+  dashboard:                   # step 5: watch at http://localhost:8502 (the old testbed keeps 8501)
+    build: ./dashboard
+    restart: unless-stopped
+    depends_on: [broker]
+    environment:
+      BROKER: 172.28.60.10
+      MQTT_PORT: "1883"
+    ports:
+      - "8502:8501"
+    networks:
+      recnet:
+        ipv4_address: 172.28.60.40
+
+  attacker:
+    build: ./attacker
+    networks:
+      recnet:
+        ipv4_address: 172.28.60.66
+
+  sensor1:  {<<: *sensor, environment: {<<: *sensor_env, SENSOR_ID: node1},  networks: {recnet: {ipv4_address: 172.28.60.21}}}
+  sensor2:  {<<: *sensor, environment: {<<: *sensor_env, SENSOR_ID: node2},  networks: {recnet: {ipv4_address: 172.28.60.22}}}
+  sensor3:  {<<: *sensor, environment: {<<: *sensor_env, SENSOR_ID: node3},  networks: {recnet: {ipv4_address: 172.28.60.23}}}
+  sensor4:  {<<: *sensor, environment: {<<: *sensor_env, SENSOR_ID: node4},  networks: {recnet: {ipv4_address: 172.28.60.24}}}
+  sensor5:  {<<: *sensor, environment: {<<: *sensor_env, SENSOR_ID: node5},  networks: {recnet: {ipv4_address: 172.28.60.25}}}
+  sensor6:  {<<: *sensor, environment: {<<: *sensor_env, SENSOR_ID: node6},  networks: {recnet: {ipv4_address: 172.28.60.26}}}
+  sensor7:  {<<: *sensor, environment: {<<: *sensor_env, SENSOR_ID: node7},  networks: {recnet: {ipv4_address: 172.28.60.27}}}
+  sensor8:  {<<: *sensor, environment: {<<: *sensor_env, SENSOR_ID: node8},  networks: {recnet: {ipv4_address: 172.28.60.28}}}
+  sensor9:  {<<: *sensor, environment: {<<: *sensor_env, SENSOR_ID: node9},  networks: {recnet: {ipv4_address: 172.28.60.29}}}
+  sensor10: {<<: *sensor, environment: {<<: *sensor_env, SENSOR_ID: node10}, networks: {recnet: {ipv4_address: 172.28.60.30}}}

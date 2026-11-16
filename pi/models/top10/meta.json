@@ -1,0 +1,27 @@
+{
+  "features": [
+    "Max",
+    "Tot size",
+    "Protocol Type",
+    "Min",
+    "Std",
+    "AVG",
+    "ICMP",
+    "ack_flag_number",
+    "TCP",
+    "fin_flag_number"
+  ],
+  "trained": "2026-11-16",
+  "model": {
+    "file": "model.txt",
+    "classes": [
+      "Benign",
+      "Flood",
+      "Recon"
+    ],
+    "rounds": 189,
+    "size_kb": 972.5,
+    "dataset_test_macro_f1": 0.743,
+    "our_test_macro_f1": 0.9573
+  }
+}

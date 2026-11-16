@@ -1,0 +1,52 @@
+# TinyIDS NEW testbed: the new detector (retrain/pi, one 3-class model, top14) + 3 sensors + attacker + dashboard.
+# How to run: see retrain/START.md.   Start: docker compose up -d --build   Stop: docker compose down
+name: tinyids_new
+
+networks:
+  net:
+    ipam:
+      config:
+        - subnet: 172.28.70.0/24
+
+x-sensor: &sensor
+  build: {context: ., dockerfile: Dockerfile.sensor}
+  restart: unless-stopped
+  depends_on: [broker]
+  environment: &env
+    BROKER: 172.28.70.10
+    MQTT_USER: tinyids
+    MQTT_PASS: tinyids123
+
+services:
+  broker:                       # = the Pi's Mosquitto (port 1883 here, 1884 on the real Pi)
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    command: sh -c "rm -f /tmp/passwd && mosquitto_passwd -c -b /tmp/passwd tinyids tinyids123 && chmod 0700 /tmp/passwd && chown mosquitto /tmp/passwd && mosquitto -c /mosquitto/config/mosquitto.conf"
+    volumes: [./broker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro]
+    networks: {net: {ipv4_address: 172.28.70.10}}
+
+  ids:                          # = the Pi's detector: the SAME code as retrain/pi
+    build: {context: .., dockerfile: testbed/ids/Dockerfile}
+    restart: unless-stopped
+    network_mode: "service:broker"
+    depends_on: [broker]
+    cap_add: [NET_ADMIN, NET_RAW]
+    command: ["python", "-u", "run_tinyids.py", "interface", "eth0", "port", "1883", "models", "/models", "admin", "172.28.70.40"]
+    volumes: [../pi/models/top14:/models:ro]
+
+  dashboard:                    # http://localhost:8503
+    build: ./dashboard
+    restart: unless-stopped
+    depends_on: [broker]
+    environment: {BROKER: 172.28.70.10, MQTT_PORT: "1883"}
+    ports: ["8503:8501"]
+    networks: {net: {ipv4_address: 172.28.70.40}}
+
+  attacker:                     # = the laptop: the SAME launch.py + bot.py as retrain/laptop
+    build: {context: .., dockerfile: testbed/attacker/Dockerfile}
+    environment: {MQTT_PORT: "1883"}
+    networks: {net: {ipv4_address: 172.28.70.66}}
+
+  sensor1: {<<: *sensor, environment: {<<: *env, SENSOR_ID: node1}, networks: {net: {ipv4_address: 172.28.70.21}}}
+  sensor2: {<<: *sensor, environment: {<<: *env, SENSOR_ID: node2}, networks: {net: {ipv4_address: 172.28.70.22}}}
+  sensor3: {<<: *sensor, environment: {<<: *env, SENSOR_ID: node3}, networks: {net: {ipv4_address: 172.28.70.23}}}
