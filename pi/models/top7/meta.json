@@ -1,14 +1,14 @@
 {
   "features": [
+    "AVG",
     "Max",
     "Tot size",
-    "Protocol Type",
-    "Min",
+    "ICMP",
     "Std",
-    "AVG",
-    "ICMP"
+    "Protocol Type",
+    "Min"
   ],
-  "trained": "2026-11-16",
+  "trained": "2026-11-17",
   "model": {
     "file": "model.txt",
     "classes": [
@@ -17,8 +17,8 @@
       "Recon"
     ],
     "rounds": 190,
-    "size_kb": 975.6,
-    "dataset_test_macro_f1": 0.7248,
-    "our_test_macro_f1": 0.9573
+    "size_kb": 976.1,
+    "dataset_test_macro_f1": 0.722,
+    "our_test_macro_f1": 0.9564
   }
 }

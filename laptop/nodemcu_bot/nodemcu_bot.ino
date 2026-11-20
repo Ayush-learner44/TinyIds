@@ -20,7 +20,7 @@
 // ---------- CHANGE THESE ----------
 const char* WIFI_SSID     = "IIITA";
 const char* WIFI_PASS     = "";
-const char* GATEWAY_IP    = "172.29.2.43";   // the Pi: broker AND the only attack target
+const char* GATEWAY_IP    = "172.29.0.144";   // the Pi: broker AND the only attack target
 const int   MQTT_PORT     = 1884;             // our broker on the Pi
 const char* MQTT_USER     = "tinyids";
 const char* MQTT_PASS     = "tinyids123";

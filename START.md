@@ -65,7 +65,7 @@ goes to `~/tinyids_new`. Nothing here starts Docker; training does not happen on
    `streamlit run laptop/dashboard.py -- <PI_IP>`
 7. **TEST FIRST:** 5 minutes with only the NodeMCUs running. Count the alerts on the dashboard (target: 0).
 8. **Attacks (laptop, WSL):** `wsl -d Ubuntu-24.04`, then
-   `cd /mnt/c/Users/HOME/Documents/iot/project/retrain/laptop`, then
+   `cd /mnt/c/Users/HOME/Documents/iot/retrain/laptop`, then
    `python3 launch.py <PI_IP>` and run 1, 2, 5, 6, 3, 4, 8 one by one. Write down for each: alert name, confidence,
    top-3 reasons, block / quarantine. Watch that the Pi stays on the Wi-Fi during UDP floods.
 9. **Only if step 7 gave false alarms on the NodeMCUs** -> part C, then repeat from step 5.

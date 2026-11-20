@@ -165,3 +165,122 @@ Measured working in Docker with the new detector (14 features, one 3-class model
 - **Normal traffic from 10 sensors: 0 false alarms** (16 min of quiet phases in total).
 - Not tested in this step: vulnerability scan live, brute force rule, ARP spoofing rule (rules unchanged).
 - Still to do: the real Pi + real NodeMCUs (lab).
+
+## Lab 17 Nov: real NodeMCU benign recording + retrain
+- Recorded on the Pi (`record.py`, 20 min, 3 NodeMCUs with `nodemcu_sensor_plain.ino`, 1 reading / 0.2 s):
+  **1,634 rows** (492 / 592 / 550 per board) -> `training/data/benign_plain.csv`.
+- Retrained (`training/train.py`, 69 s): our benign rows now 2,934 (Docker 1,300 + real 1,634).
+
+| Features | Dataset test macro-F1 | Our test macro-F1 | Our benign test rows flagged |
+|---|---|---|---|
+| 5 | 0.691 | 0.972 | 0 of 448 |
+| 7 | 0.740 | 0.981 | 0 of 448 |
+| 10 | 0.758 | 0.674 (floods -> Recon again, unstable) | 0 of 448 |
+| **14 (used)** | **0.763** | **0.983** | **2 of 448** |
+
+## Lab 17 Nov: real attack recordings + retrain
+- Recorded on the Pi WITHOUT admin while the laptop (172.29.2.52) attacked from WSL (`attack_all.sh ... floods|scans`):
+  `flood_lab.csv` 4,616 laptop rows (4,268 kept, pps >= 20) + 454 NodeMCU rows (Benign);
+  `recon_lab.csv` 443 laptop rows (135 kept) + 359 NodeMCU rows. UDP and ICMP floods ran only 4 s / 2 s (WSL "Network
+  is unreachable" again); SYN, ACK, PSH-ACK, RST-FIN ran 15 s each.
+- Retrained (70 s). Our rows: Benign 3,747, Flood 44,568, Recon 244. CICIoT2023 is still ~96% of the training rows.
+
+| Features | Dataset test macro-F1 | Our test macro-F1 | Our benign test rows flagged |
+|---|---|---|---|
+| 5 | 0.642 | 0.891 | 0 of 558 |
+| 7 | 0.710 | 0.953 | 0 of 558 |
+| 10 | 0.754 | 0.700 (unstable again) | 0 of 558 |
+| **14 (used)** | **0.762** | **0.981** (Flood 0.999, Recon 0.947) | **1 of 558** |
+
+## Lab 17 Nov: status of the planned attacks (during the final run, RAM 78 MB with attacks)
+
+| Planned | Status on the real Pi |
+|---|---|
+| DoS floods (SYN, UDP, ICMP, TCP/ACK, PSH-ACK, RST-FIN) | tested from the laptop, recorded and trained |
+| DDoS floods (same, 2+ senders) | NOT tested on the real Pi yet (needs the bot firmware; worked in Docker) |
+| Port scan | tested, recorded and trained |
+| Vulnerability / version scan | version scan tested and recorded |
+| OS scan (`nmap -O`) | NOT run (needs sudo password) |
+| MQTT brute force | rule works |
+| ARP spoofing | NOT tested |
+| Benign with text notes | NOT recorded (optional; plain benign works) |
+
+## Lab 17 Nov: FINAL live test after the retrain (attack_all.sh, fresh attacks, IPS ON, 3 NodeMCUs running)
+
+Logs: `laptop/attack_log_1446.txt`, `laptop/dashboard_alerts_1446.txt` (+ the Pi's `lab_log2.txt`). RAM 78 MB.
+
+| Attack | Alert | Confidence | Top-3 SHAP reasons |
+|---|---|---|---|
+| normal traffic (60 s before, 60 s after) | **none** | | |
+| SYN flood | **DoS flood** (was "Recon" before the retrain) | 0.968 | Min, syn_flag_number, Std |
+| UDP flood | DoS flood | 0.999 | Min, Protocol Type, UDP |
+| ICMP flood (ran 6 s, WSL glitch) | DoS flood | 0.999 | ICMP, Min, ack_flag_number |
+| ACK flood | **DoS flood** (was missed before the retrain) | 0.979 | Min, Max, Std |
+| PSH-ACK flood | DoS flood | 1.000 | psh_flag_number, Min, Max |
+| RST-FIN flood | DoS flood | 1.000 | Min, fin_flag_number, rst_flag_number |
+| port scan | Recon (model) + Recon (port-scan rule) | 0.992 / 1.0 | AVG, Tot size, Protocol Type |
+| version scan | Recon (model) | 0.992 | AVG, Tot size, Protocol Type |
+| MQTT brute force | BruteForce (rule) | 1.0 | refused MQTT logins |
+
+**12 alerts, all correct, 0 false alarms on the 3 NodeMCUs for the whole run** (no node alerts at all; the node3 loop
+is gone). Every attack was blocked for 30 s.
+
+## Lab 17 Nov: real bot floods (3 NodeMCUs, bot firmware) + retrain
+- First live DDoS test (model before this retrain): bot UDP flood -> DoS -> DDoS flood (2 -> 3 senders), 0.90-1.00,
+  all 3 quarantined. Bot TCP flood -> DDoS flood (3 senders) but only 0.58-0.74 (2 bots only rate-limited).
+  College Wi-Fi drops UDP broadcast: `bot.py` now also takes the bot IPs and sends the command to each one.
+- Recorded on the Pi (IDS off) WHILE the bots flooded: `flood_bots_lab_tcp1..3.csv` (746 / 790 / 923 rows),
+  `flood_bots_lab_udp1.csv` (843 rows; node3 sent ~267,000 UDP packets in 30 s). All bot rows = Flood; the laptop's
+  few SSH rows are dropped.
+- Grace period after a quarantine: 30 s, only when it runs out by itself (not after Flush Bans).
+- Retrained (61 s), top 14: dataset test 0.760, our test 0.957 (Flood 0.999, Recon 0.875 on 39 rows), 1 of 567
+  benign test rows flagged.
+- **Live test after this retrain:** bot TCP flood -> DoS -> DDoS flood (2 -> 3 senders), **0.96-0.97**, **all 3
+  quarantined** within 1 s (before: 0.58-0.74, 2 bots only rate-limited).
+- Bot UDP flood (same model): DoS -> DDoS flood (2 -> 3 senders), **1.00**, all 3 quarantined within 1 s.
+- Note: `bot.py` sometimes prints "no bot answered" although the bots DO attack (seen on the Pi). The bots' replies
+  get lost (most often during the UDP flood, when the Wi-Fi is saturated). Cosmetic; the command itself arrives.
+- Problem seen: stopping `./run_ids.sh ... | tee log` with Ctrl+C kills `tee` first; the IDS then crashes
+  (BrokenPipeError) while removing its blocks, so old iptables DROP rules stay behind. The blocked NodeMCUs keep
+  retrying MQTT (SYN / RST) and the new IDS flags them as floods. Fix: `sudo iptables -F INPUT`, and start with
+  `tee -i` (tee ignores Ctrl+C). After that: no alerts with only the NodeMCUs running.
+
+## Lab 17 Nov: FINAL run with the FINAL model (after the bot-flood retrain), Pi log `laptop/lab_logs_17nov/lab_log4.txt`
+
+| Attack (laptop, one sender) | Alert | Confidence | Top-3 SHAP reasons |
+|---|---|---|---|
+| normal traffic 60 s before / after (3 NodeMCUs on) | none | | |
+| SYN flood | DoS flood | 0.96 | Min, Std, ack_flag_number |
+| UDP flood | DoS flood | 1.00 | Protocol Type, Min, UDP |
+| ICMP flood | DoS flood | 1.00 | ICMP, Min, ack_flag_number |
+| ACK flood | DoS flood | 0.98 | Min, Max, Std |
+| PSH-ACK flood | DoS flood | 1.00 | psh_flag_number, Min, Max |
+| RST-FIN flood | DoS flood | 1.00 | fin_flag_number, Min, rst_flag_number |
+| port scan | Recon (model) + Recon (port-scan rule) | 0.99 / 1.00 | AVG, Tot size, Max |
+| version scan | Recon (model) | 0.99 | AVG, Tot size, Max |
+| MQTT brute force | BruteForce (rule) | 1.00 | refused MQTT logins |
+| OS scan (`sudo nmap -O`, extra, by hand) | DoS flood (wrong name, but blocked at once) | 0.96 | Min, Std, syn_flag_number |
+
+Bots with the same model (same session): TCP DDoS 0.96-0.97 and UDP DDoS 1.00, all 3 quarantined.
+**Every attack detected and blocked; no false alarms on the 3 NodeMCUs.** Not tested: ARP spoofing.
+The Pi's clock is ~1 h 12 min behind the laptop (laptop 15:51 = Pi 14:38).
+
+## Lab 19 Nov: ARP spoofing on the real Pi (IIITA Wi-Fi)
+
+Attack (laptop, WSL): `python3 launch.py 172.29.3.125` -> 7 -> pretend to be node1 (`172.29.1.253`), i.e.
+`sudo arpspoof -i eth1 -t 172.29.3.125 172.29.1.253` for 10 s. Check on the Pi at the same time:
+`sudo tcpdump -n -i wlan0 arp and host 172.29.1.253`.
+
+| | MAC in the ARP reply |
+|---|---|
+| sent by the laptop (arpspoof output, 5 replies) | `2c:98:11:80:93:63` (the laptop: the fake claim) |
+| received by the Pi (tcpdump, 5 replies, 17:19:42-46, same seconds) | `bc:dd:c2:16:1e:bc` (node1's real MAC) |
+
+**Result:** the college access point **rewrites spoofed ARP replies** on the way: the Pi only ever received the
+correct "node1 is at node1's MAC". The Pi's ARP table was never poisoned, and TinyIDS correctly raised **no alert**
+(there was nothing wrong to see). So ARP spoofing **cannot be tested on the IIITA Wi-Fi**; the network itself stops
+it before it reaches the gateway. The AddressWatcher rule was tested in Docker (13 Nov). A real-hardware test needs
+our own Wi-Fi (e.g. a phone hotspot with the Pi, laptop and NodeMCUs re-flashed for it).
+
+**Report sentence:** "ARP spoofing: the rule was tested in Docker. On the college Wi-Fi the access point rewrites
+spoofed ARP replies, so the attack never reaches the gateway (verified with tcpdump on the Pi)."

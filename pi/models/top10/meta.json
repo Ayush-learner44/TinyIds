@@ -1,17 +1,17 @@
 {
   "features": [
+    "AVG",
     "Max",
     "Tot size",
+    "ICMP",
+    "Std",
     "Protocol Type",
     "Min",
-    "Std",
-    "AVG",
-    "ICMP",
     "ack_flag_number",
-    "TCP",
-    "fin_flag_number"
+    "psh_flag_number",
+    "TCP"
   ],
-  "trained": "2026-11-16",
+  "trained": "2026-11-17",
   "model": {
     "file": "model.txt",
     "classes": [
@@ -20,8 +20,8 @@
       "Recon"
     ],
     "rounds": 189,
-    "size_kb": 972.5,
-    "dataset_test_macro_f1": 0.743,
-    "our_test_macro_f1": 0.9573
+    "size_kb": 972.7,
+    "dataset_test_macro_f1": 0.7541,
+    "our_test_macro_f1": 0.699
   }
 }

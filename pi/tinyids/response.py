@@ -73,6 +73,7 @@ class Responder:
         self.never_block_macs = set()       # filled by TinyIDS: the router and the gateway itself
         self.active = {}            # ip or MAC -> {"action", "until", "reason", "node", "rule", "pinned_ip"}
         self.history = []
+        self.grace = {}             # sensor IP -> time until which model alerts are ignored (after a quarantine)
 
     # ---------------------------------------------------------------- deciding
     def respond(self, ip, attack, confidence):
@@ -117,6 +118,8 @@ class Responder:
     # ---------------------------------------------------------------- undoing
     def release(self, target, why):
         entry = self.active.pop(target, None)
+        if entry and entry["action"] == "quarantine" and why != "stronger action needed":   # also after Flush
+            self.grace[target] = time.time() + 30   # its reconnect burst must not get it quarantined again (loop)
         if entry:
             self.firewall.remove(entry["rule"])
             if entry.get("pinned_ip"):

@@ -1,0 +1,882 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[margin=2.3cm]{geometry}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{parskip}
+\usepackage{setspace}
+\usepackage{needspace}
+\usepackage[most]{tcolorbox}
+\usepackage[hidelinks]{hyperref}
+
+\setstretch{1.25}
+\setlength{\parskip}{0.8em}
+\setlist{itemsep=0.35em, topsep=0.4em}
+\renewcommand{\arraystretch}{1.45}
+\definecolor{accent}{RGB}{30,80,150}
+\titleformat{\section}{\Large\bfseries\color{accent}}{\thesection}{0.8em}{}
+\titleformat{\subsection}{\large\bfseries}{\thesubsection}{0.8em}{}
+\titlespacing*{\section}{0pt}{2.0em}{1.0em}
+\titlespacing*{\subsection}{0pt}{1.4em}{0.6em}
+\newcolumntype{L}{>{\raggedright\arraybackslash}X}
+\newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcommand{\file}[1]{\texttt{\small #1}}
+\newcommand{\keybox}[1]{\par\smallskip\noindent\colorbox{accent!8}{\parbox{\dimexpr\linewidth-2\fboxsep}{\vspace{0.5em}#1\vspace{0.5em}}}\par\medskip}
+
+% ---- family colours (the same as the dashboard)
+\definecolor{cFlood}{HTML}{EF4444}
+\definecolor{cDDoS}{HTML}{BE123C}
+\definecolor{cSpoofFlood}{HTML}{8B5CF6}
+\definecolor{cFrag}{HTML}{EA580C}
+\definecolor{cRecon}{HTML}{0891B2}
+\definecolor{cBrute}{HTML}{D97706}
+\definecolor{cARP}{HTML}{7C3AED}
+\definecolor{cNone}{HTML}{64748B}
+% ---- badge colours
+\definecolor{bModel}{HTML}{2563EB}
+\definecolor{bRule}{HTML}{16A34A}
+\definecolor{bKernel}{HTML}{475569}
+\definecolor{bLive}{HTML}{15803D}
+\definecolor{bDocker}{HTML}{0E7490}
+\definecolor{bData}{HTML}{B45309}
+\definecolor{bNo}{HTML}{B91C1C}
+
+\newcommand{\badge}[2]{\tcbox[on line, colback=#1, colframe=#1, arc=2pt, boxsep=1.5pt, left=3pt, right=3pt, top=1pt,
+  bottom=1pt]{\textcolor{white}{\scriptsize\bfseries #2}}}
+\newcommand{\MODEL}{\badge{bModel}{MODEL}}
+\newcommand{\RULE}[1]{\badge{bRule}{RULE: #1}}
+\newcommand{\KERNEL}{\badge{bKernel}{LINUX KERNEL}}
+\newcommand{\LIVE}{\badge{bLive}{TESTED LIVE ON THE PI}}
+\newcommand{\DOCKER}{\badge{bDocker}{TESTED IN DOCKER}}
+\newcommand{\DATA}{\badge{bData}{DATASET ROWS ONLY}}
+\newcommand{\NOTEST}{\badge{bNo}{NOT TESTED}}
+\newcommand{\NOTCOV}{\badge{bNo}{NOT COVERED}}
+
+\newtcolorbox{attack}[2]{enhanced, breakable, colback=#1!3, colframe=#1!80!black, coltitle=white,
+  colbacktitle=#1!85!black, title={\large\bfseries #2}, boxrule=0.8pt, arc=4pt, left=8pt, right=8pt, top=6pt,
+  bottom=6pt, before skip=1.4em, after skip=1.4em}
+\newcommand{\fld}[2]{\par\vspace{0.55em}\noindent{\bfseries\color{black!75}#1}\par\vspace{-0.4em}\noindent #2\par}
+
+\begin{document}
+
+\begin{titlepage}
+\centering
+\vspace*{4.5cm}
+{\Huge\bfseries\color{accent} TinyIDS\par}
+\vspace{1.2em}
+{\LARGE The attacks: what they are and how we stop them\par}
+\vspace{2.5em}
+{\large Every attack the Raspberry Pi gateway detects and mitigates: what it does, why attackers use it, the harm it
+causes, how it is usually stopped, and how TinyIDS stops it\par}
+\vfill
+{\large 18 November 2026\par}
+\vspace{2cm}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% ===============================================================================================================
+\section{Viva: problem, layers and defence}
+
+\subsection{The problem statement}
+
+\keybox{IoT devices (here: NodeMCU sensors) are cheap and have almost no security of their own: no firewall, weak
+passwords, no updates. They all talk through one \textbf{gateway} (the Raspberry Pi). We build a small
+\textbf{intrusion detection and prevention system} that runs \emph{on that gateway}, in real time, on a
+Raspberry Pi 4: it watches every packet that reaches the gateway, detects floods (DoS / DDoS), scans, MQTT password
+guessing and spoofing, \textbf{blocks} the attacker automatically, and \textbf{explains} every alert with its top-3
+reasons (SHAP).}
+
+\subsection{The layers in one table}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{P{2.5cm}P{4.3cm}P{3.0cm}L}
+\toprule
+Layer & Its job & What it adds & Example in our system \\
+\midrule
+7 Application & what the programs say to each other & the message & MQTT, HTTP (dashboard) \\
+6 Presentation & format, encryption & (TLS, JSON) & JSON sensor messages \\
+5 Session & keep a conversation going & -- & the MQTT session \\
+4 Transport & from program to program; reliable (TCP) or fast (UDP) & \textbf{port numbers}, TCP flags & TCP 1884,
+UDP 5683, SYN/ACK/FIN \\
+3 Network & from device to device, across networks & \textbf{IP addresses} & 172.29.3.125 (Pi) \\
+2 Data link & to the next device on the same network & \textbf{MAC addresses} & Wi-Fi frames, ARP \\
+1 Physical & bits as signals & -- & the Wi-Fi radio \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Going down the stack (sending), each layer wraps the data with its own header: message $\rightarrow$
++ port (4) $\rightarrow$ + IP (3) $\rightarrow$ + MAC (2) $\rightarrow$ radio (1). The receiver unwraps it the other
+way. \textbf{ARP} links layer 3 to 2: it answers ``which MAC has this IP?''. In the TCP/IP model, layers 5--7 are
+one ``application'' layer.
+
+\subsection{Which layer are we securing?}
+
+\textbf{Mainly the network and transport layers (OSI layers 3 and 4)} of the traffic arriving at the gateway: the
+model reads IP / TCP / UDP / ICMP header information (protocol, TCP flags, packet sizes). Around that, our rules also
+cover \textbf{layer 2} (ARP spoofing: MAC $\leftrightarrow$ IP) and \textbf{layer 7} (MQTT brute force: the broker's
+login answers).
+
+In the 3-layer IoT model: the NodeMCUs are the \textbf{perception layer}, the Wi-Fi and the Pi gateway are the
+\textbf{network layer} (that is where TinyIDS sits), and the broker and dashboard are the \textbf{application layer}.
+
+\textbf{Type of IDS:} a \textbf{network-based IDS} placed on the gateway (it watches traffic, not files or processes),
+that also acts as an \textbf{IPS} (it blocks, through the gateway's firewall). Detection = \textbf{machine learning}
+(a supervised classifier trained on labelled attacks) + \textbf{rules} (signature-like thresholds).
+
+\subsection{Every part of the system and its layer}
+
+\begin{longtable}{P{3.5cm}P{3.6cm}P{7.9cm}}
+\toprule
+Part & Layer (OSI) & Why \\
+\midrule
+\endhead
+Wi-Fi (IIITA) & 1 physical, 2 data link & radio + 802.11 frames with MAC addresses; everything travels over it \\
+NodeMCU (ESP8266) & all layers 1--7 (an end device) & Wi-Fi radio (1--2), gets an IP (3), opens TCP to the broker (4),
+speaks MQTT (7). In IoT terms: perception layer \\
+MQTT & \textbf{7 application}, over TCP (4) & publish / subscribe protocol, TCP port 1884 (ours) \\
+Mosquitto broker (Pi) & 7 application & a server program that passes MQTT messages on \\
+Raspberry Pi (gateway) & 3 network device; runs all layers & every device sends to it; it captures, decides,
+blocks \\
+Packet capture (scapy) & reads at 2 (frames) & sees the whole Ethernet / Wi-Fi frame incl. MAC addresses \\
+\textbf{The ML model} & \textbf{uses layers 3--4} information & features = IP protocol, TCP flags, packet sizes;
+the program itself runs as an application on the Pi \\
+PortScanRule & 4 transport & counts different destination \textbf{ports} \\
+FloodCounter & 3 network & counts different source \textbf{IP addresses} (DoS vs DDoS) \\
+BruteForceRule & 7 application & reads the broker's MQTT CONNACK answers (refused logins) \\
+AddressWatcher & 2 data link / 3 network & checks MAC $\leftrightarrow$ IP pairs (ARP and IP spoofing) \\
+\textbf{Mitigation (iptables)} & \textbf{3--4} (and 2 for MAC blocks) & Linux kernel firewall (netfilter): drops by
+source IP, rate-limits packets, drops by MAC; SYN cookies work at 4 \\
+Dashboard (Streamlit) & 7 application & a web page (HTTP) that is also an MQTT client \\
+Laptop & an end device (all layers) & operator (dashboard, SSH) and attacker \\
+WSL & not a network layer & just Linux running on the laptop, sharing its Wi-Fi card, so Linux attack tools run
+there \\
+hping3 & builds packets at 3--4 & hand-made IP / TCP / UDP / ICMP packets (floods) \\
+nmap & 4 (ports), 3 (OS guess), 7 (versions) & port scan, OS fingerprint, service versions \\
+mosquitto\_pub (brute force) & 7 application & real MQTT logins with wrong passwords \\
+arpspoof & 2 data link & fake ARP replies \\
+bot.py (bot master) & 4 (UDP), message at 7 & one UDP packet with the text ``udp 10'' to port 6667 \\
+\bottomrule
+\end{longtable}
+
+\subsection{The attacks by layer}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{P{2.6cm}P{5.0cm}L}
+\toprule
+Layer & Attacks & Our defence \\
+\midrule
+2 data link & ARP spoofing & AddressWatcher: block the MAC, fix the ARP table (on the college Wi-Fi the access point
+already rewrites spoofed ARP) \\
+3 network & ICMP flood, IP-spoofed floods, fragmentation floods, DDoS (many sources) & model (Flood) + FloodCounter
+(DoS vs DDoS) + AddressWatcher (spoofed sources) $\rightarrow$ iptables block \\
+4 transport & SYN, ACK, PSH-ACK, RST-FIN and UDP floods; port scan & model (Flood / Recon) + PortScanRule + SYN
+cookies $\rightarrow$ iptables block / rate-limit \\
+7 application & MQTT brute force (version / OS scans touch 7 and 3 too) & BruteForceRule $\rightarrow$ block;
+web attacks, HTTP floods, DNS spoofing: out of scope \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{How we mitigate, in one paragraph}
+
+Detection at the gateway, \textbf{enforcement in the gateway's Linux kernel}: TinyIDS adds an \textbf{iptables}
+rule, so the kernel drops the attacker's packets before they reach the broker. Sure attacks are \textbf{blocked}
+(30 s), our own compromised NodeMCUs are \textbf{quarantined} (120 s), unsure ones are \textbf{rate-limited}
+(20 packets/s), spoofers are blocked \textbf{by MAC}. Every action expires by itself, the operator's laptop is never
+locked out, and the dashboard can switch blocking off or release everything.
+
+\subsection{Likely questions, short answers}
+
+\begin{longtable}{P{5.2cm}P{9.8cm}}
+\toprule
+Question & Answer \\
+\midrule
+\endhead
+Why at the gateway, not on each sensor? & A NodeMCU has about 80 KB of RAM and no firewall; the gateway sees all traffic
+and can block it in one place. \\
+Why not just use TLS / passwords? & TLS protects \emph{confidentiality}: nobody can read the messages. A flood
+attacks \emph{availability}: encryption does not stop 1000 packets a second. Passwords are there (broker login), and
+the brute-force rule protects them. \\
+DoS vs DDoS? & DoS = one attacker; DDoS = many at once (a botnet). The model says ``Flood'', the FloodCounter rule
+counts the senders (2+ in 10 s = DDoS). \\
+What if the attacker fakes his IP? & Then blocking the IP is useless: the AddressWatcher sees one MAC using many IPs
+and blocks the MAC. \\
+Signature-based or anomaly-based? & Neither purely: a \emph{supervised} ML classifier trained on labelled attacks,
+plus threshold rules. Not anomaly detection (it does not learn ``normal'' only). \\
+Inline or passive? & It sniffs a copy of every packet (passive detection) and enforces through the kernel firewall
+(active prevention): an IDS + IPS. \\
+False positives? & Threshold 0.70, 2 windows in a row for unsure cases, the admin laptop never blocked, a 30 s grace
+after a quarantine. Live: 0 false alarms on the 3 NodeMCUs. \\
+What can it not stop? & Web attacks (no web server), low-rate DDoS, attacks hidden inside encrypted traffic, and
+anything at layer 1 (radio jamming). \\
+\bottomrule
+\end{longtable}
+
+\newpage
+\section{Demo cheat sheet: command $\rightarrow$ what the dashboard shows}
+
+For every attack: the command that starts it, where to type it, the alert name the dashboard shows, and the
+\textbf{top-3 SHAP reasons} (measured live on the Pi, 17 November). \file{PI} = the Pi's IP address.
+All floods run for a fixed time: put \texttt{timeout -s INT 15} in front (stops after 15 s). The scripts do this
+for you: \texttt{bash attack\_all.sh PI} (every attack in a row) or \texttt{python3 launch.py PI} (a menu).
+
+\newcommand{\cmd}[1]{\texttt{\scriptsize #1}}
+\newcommand{\where}[1]{\par{\scriptsize\color{black!60}#1}}
+\newcommand{\shap}[1]{\textcolor{bModel}{\texttt{\scriptsize #1}}}
+\newcommand{\rul}[1]{\textcolor{bRule}{\texttt{\scriptsize #1}}}
+
+\begin{longtable}{P{3.1cm}P{6.1cm}P{5.9cm}}
+\toprule
+Attack & Command & Dashboard alert \;/\; top-3 reasons \\
+\midrule
+\endhead
+\multicolumn{3}{l}{\textcolor{cFlood}{\textbf{Floods (DoS), from the laptop}}} \\
+SYN flood \where{WSL} & \cmd{sudo hping3 -S -p 1883 -i u1000 PI} & \textbf{DoS flood} 0.96 \newline
+\shap{Min, Std, ack\_flag\_number} \newline {\scriptsize tiny equal packets, no ACK flag} \\
+UDP flood \where{WSL} & \cmd{sudo hping3 --udp -p 5683 -d 8 -i u1000 PI} & \textbf{DoS flood} 1.00 \newline
+\shap{Protocol Type, Min, UDP} \newline {\scriptsize protocol 17 = UDP} \\
+ICMP flood \where{WSL} & \cmd{sudo hping3 --icmp -i u1000 PI} & \textbf{DoS flood} 1.00 \newline
+\shap{ICMP, Min, ack\_flag\_number} \newline {\scriptsize all packets are pings} \\
+ACK flood \where{WSL} & \cmd{sudo hping3 -A -p 1883 -i u1000 PI} & \textbf{DoS flood} 0.98 \newline
+\shap{Min, Max, Std} \newline {\scriptsize every packet exactly the same tiny size} \\
+PSH-ACK flood \where{WSL} & \cmd{sudo hping3 -PA -p 1883 -i u1000 PI} & \textbf{DoS flood} 1.00 \newline
+\shap{psh\_flag\_number, Min, Max} \newline {\scriptsize PSH flag in every packet} \\
+RST-FIN flood \where{WSL} & \cmd{sudo hping3 -RF -p 1883 -i u1000 PI} & \textbf{DoS flood} 1.00 \newline
+\shap{fin\_flag\_number, Min, rst\_flag\_number} \newline {\scriptsize FIN + RST in every packet} \\
+\midrule
+\multicolumn{3}{l}{\textcolor{cDDoS}{\textbf{DDoS, from the 3 NodeMCU bots}}} \\
+Bot TCP DDoS \where{Windows (PowerShell), in \file{laptop/}} & \cmd{python bot.py tcp 10} &
+\textbf{DDoS flood (3 senders)} 0.96--0.97, all 3 \textbf{quarantined} \newline
+\shap{rst\_flag\_number, syn\_flag\_number, Min} \newline {\scriptsize open + close connections} \\
+Bot UDP DDoS \where{Windows (PowerShell)} & \cmd{python bot.py udp 10} & \textbf{DDoS flood (3 senders)} 1.00,
+\textbf{quarantined} \newline \shap{Min, Protocol Type, UDP} \\
+Stop the bots \where{Windows} & \cmd{python bot.py stop} & -- \\
+\midrule
+\multicolumn{3}{l}{\textcolor{cRecon}{\textbf{Scans, from the laptop}}} \\
+Port scan \where{WSL} & \cmd{nmap -sT -T4 -p 1-1024 PI} & \textbf{Recon} 0.99 (model) \newline
+\shap{AVG, Tot size, Max} \newline + \textbf{Recon} 1.00 (rule) \newline
+\rul{different ports, within seconds, rule threshold} \\
+Version scan \where{WSL} & \cmd{nmap -sV --top-ports 100 PI} & \textbf{Recon} 0.99 \newline
+\shap{AVG, Tot size, Max} \\
+OS scan \where{WSL} & \cmd{sudo nmap -O PI} & \textbf{DoS flood} 0.96 (wrong name, still blocked) \newline
+\shap{Min, Std, syn\_flag\_number} \\
+Vulnerability scan \where{WSL (menu only)} & \cmd{nmap --script vuln -p 1884 PI} & expected \textbf{Recon}
+{\scriptsize (not in the final live run)} \\
+\midrule
+\multicolumn{3}{l}{\textcolor{cBrute}{\textbf{Password attack, from the laptop}}} \\
+MQTT brute force \where{WSL} & \cmd{for p in 123456 password admin 12345678 qwerty; do timeout 3 mosquitto\_pub -h
+PI -p 1884 -u tinyids -P \$p -t test -m hi; done} & \textbf{BruteForce} 1.00 (rule) \newline
+\rul{refused MQTT logins, within seconds, rule threshold} \\
+\midrule
+\multicolumn{3}{l}{\textcolor{cSpoofFlood}{\textbf{Spoofing (tested in Docker only)}}} \\
+IP-spoofed flood \where{WSL (from the old project's \file{launch.py})} &
+\cmd{sudo hping3 -S -p 1884 -i u2000 --rand-source PI} \newline
+\cmd{sudo hping3 --udp -p 5683 -d 32 -i u2000 --rand-source PI} & \textbf{IP spoofing} (rule), MAC blocked
+\newline \rul{source IPs from one MAC, within seconds, rule threshold} \\
+ARP spoofing \where{WSL, menu option 7} & \cmd{sudo arpspoof -i IFACE -t PI NODEMCU\_IP} & \textbf{ARP spoofing}
+(rule), MAC blocked + ARP fixed \newline \rul{IP claimed, new MAC, known MAC} \\
+\midrule
+Normal traffic & 3 NodeMCUs on, no attack & \textbf{no alert} (0 false alarms live) \\
+\bottomrule
+\end{longtable}
+
+\textbf{Model or rule?} Every alert says where it came from (\file{source}: \texttt{model} or \texttt{rule}).
+\shap{Blue} reasons are SHAP features (the model); \rul{green} reasons are the counts of a rule (no SHAP, a rule
+has no model to explain).
+
+\subsection*{Reading the SHAP reasons in 5 seconds}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{P{5.6cm}L}
+\toprule
+If the top reasons contain\ldots & it is most likely\ldots \\
+\midrule
+\shap{Min}, \shap{Std}, \shap{ack\_flag\_number} (tiny packets, no ACK) & SYN flood (live) \\
+\shap{syn\_flag\_number} & SYN packets: bot TCP flood, or an OS scan (named ``Flood'' live) \\
+\shap{UDP}, \shap{Protocol Type} & UDP flood (protocol 17) \\
+\shap{ICMP} & ping flood \\
+\shap{psh\_flag\_number} & PSH-ACK flood \\
+\shap{rst\_flag\_number}, \shap{fin\_flag\_number} & RST-FIN flood, or bot TCP flood (connections closed) \\
+only sizes: \shap{Min}, \shap{Max}, \shap{Std} & ACK flood (identical tiny packets) \\
+\shap{AVG}, \shap{Tot size}, \shap{Max} with \textbf{Recon} & a scan (larger, varied packets) \\
+``(N senders)'' in the alert name & DDoS: the FloodCounter rule counted N flooding senders \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\newpage
+\section{What every part of the commands means}
+
+\subsection{First: the TCP flags, in plain words}
+
+Every TCP packet carries small on/off switches called \textbf{flags}. They say what the packet is for. A normal
+conversation uses them like a phone call:
+
+\begin{center}
+\begin{tabularx}{\linewidth}{P{2.0cm}P{4.4cm}L}
+\toprule
+Flag & Means & In a phone call \\
+\midrule
+\textbf{SYN} & ``I want to start a connection'' & dialling the number \\
+\textbf{ACK} & ``I received what you sent'' & ``mm-hm, I heard you'' \\
+\textbf{PSH} & ``here is data, hand it to the program now'' & ``listen, this is important'' \\
+\textbf{FIN} & ``I am finished, let us close politely'' & ``bye!'' \\
+\textbf{RST} & ``stop at once, this connection is cancelled'' & slamming the phone down \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+A normal connection: SYN $\rightarrow$ SYN+ACK $\rightarrow$ ACK, then data with PSH+ACK, then FIN to close. A flood
+sends one of these over and over, thousands of times a second, with no real conversation behind it.
+
+\subsection{hping3: the flood tool}
+
+\textbf{hping3} builds packets exactly the way you describe them and fires them at a target. Example:
+\cmd{timeout -s INT 15 sudo hping3 -S -p 1883 -i u1000 PI}
+
+\begin{longtable}{P{3.6cm}P{11.4cm}}
+\toprule
+Part & What it means \\
+\midrule
+\endhead
+\cmd{timeout -s INT 15} & ``stop the following command after 15 seconds''. \cmd{-s INT} = stop it the same way
+as pressing Ctrl+C, so hping3 still prints its summary (how many packets it sent). \\
+\cmd{sudo} & ``run as administrator''. Building your own raw packets needs admin rights. \\
+\cmd{hping3} & the program itself. \\
+\cmd{-S} & set the \textbf{SYN} flag in every packet $\rightarrow$ SYN flood. \\
+\cmd{-A} & set the \textbf{ACK} flag $\rightarrow$ ACK flood. \\
+\cmd{-PA} & two flags together: \cmd{-P} = \textbf{PSH} and \cmd{-A} = \textbf{ACK} $\rightarrow$ PSH-ACK flood. \\
+\cmd{-RF} & two flags together: \cmd{-R} = \textbf{RST} and \cmd{-F} = \textbf{FIN} $\rightarrow$ RST-FIN flood. \\
+\cmd{--udp} & send UDP packets instead of TCP (UDP has no flags and no connection). \\
+\cmd{--icmp} & send ICMP packets: ping requests. \\
+\cmd{-p 1883} & the \textbf{port}: which ``door'' of the Pi to hit. 1883 = the lab's MQTT broker, 1884 = ours,
+5683 = the CoAP port used for the UDP floods. \\
+\cmd{-i u1000} & the \textbf{interval} between two packets: \cmd{u} = microseconds, so 1000 microseconds = 1
+millisecond $\rightarrow$ about \textbf{1000 packets every second}. (\cmd{u2000} = about 500 per second.) \\
+\cmd{-d 8} & put \textbf{8 bytes} of data in every packet (default: none). \cmd{-d 32} = 32 bytes. \\
+\cmd{--rand-source} & write a \textbf{random fake sender address} on every packet (IP spoofing). \\
+\cmd{-c 3} & send only \textbf{3} packets, then stop (used by \file{attack\_all.sh} to check that the Pi can be
+reached). \\
+\cmd{-f} & cut every packet into fragments (a fragmentation flood; we never used it). \\
+\cmd{PI} & the target: write the Pi's IP address here, e.g.\ \cmd{172.29.2.187}. \\
+\bottomrule
+\end{longtable}
+
+\subsection{nmap: the scanning tool}
+
+\textbf{nmap} knocks on the target's ports to find out which are open, and what is running behind them.
+
+\begin{longtable}{P{3.6cm}P{11.4cm}}
+\toprule
+Part & What it means \\
+\midrule
+\endhead
+\cmd{-sT} & \textbf{connect scan}: for every port, try a normal, full connection. If it connects, the port is open.
+Needs no admin rights. \\
+\cmd{-T4} & \textbf{speed} setting from 0 (very slow, sneaky) to 5 (very fast). 4 = fast. \\
+\cmd{-p 1-1024} & which \textbf{ports} to try: number 1 up to 1024 (where the common services live). \\
+\cmd{-sV} & \textbf{version scan}: on every open port, talk to the program a little until it tells its name and
+version (e.g.\ ``Mosquitto 2.0''). \\
+\cmd{--top-ports 100} & try only the 100 most commonly used ports (faster than all of them). \\
+\cmd{-O} & \textbf{OS scan}: send unusual packets and guess the operating system from how it answers. Needs
+\cmd{sudo}. \\
+\cmd{--script vuln} & run nmap's ready-made scripts that test for \textbf{known weaknesses}
+(vulnerabilities). \\
+\bottomrule
+\end{longtable}
+
+\subsection{mosquitto\_pub: the brute-force attack}
+
+\cmd{for p in 123456 password admin; do timeout 3 mosquitto\_pub -h PI -p 1884 -u tinyids -P \$p -t test -m hi; done}
+
+\begin{longtable}{P{3.6cm}P{11.4cm}}
+\toprule
+Part & What it means \\
+\midrule
+\endhead
+\cmd{for p in A B C; do \ldots; done} & a \textbf{loop}: do the same thing once with \cmd{p} = A, then with
+\cmd{p} = B, then C. Here: once for every password in the list. \\
+\cmd{mosquitto\_pub} & a small program that logs in to an MQTT broker and publishes one message. \\
+\cmd{-h PI} & \textbf{host}: the broker's address (the Pi). \\
+\cmd{-p 1884} & the broker's \textbf{port} (ours). \\
+\cmd{-u tinyids} & the \textbf{user name} to log in with. \\
+\cmd{-P \$p} & the \textbf{password} to try: \cmd{\$p} is replaced by the current password from the list. \\
+\cmd{-t test} & the \textbf{topic} to publish to. \\
+\cmd{-m hi} & the \textbf{message} to publish. (It never arrives: the password is wrong, the broker refuses.) \\
+\cmd{timeout 3} & give up on one try after 3 seconds. \\
+\bottomrule
+\end{longtable}
+
+\subsection{The other commands}
+
+\begin{longtable}{P{4.6cm}P{10.4cm}}
+\toprule
+Command & What it means \\
+\midrule
+\endhead
+\cmd{python bot.py tcp 10} & run the bot master: tell every NodeMCU bot to do a \textbf{TCP} flood for \textbf{10
+seconds}. \cmd{udp 10} = UDP flood, \cmd{stop} = stop now. (Windows, in the \file{laptop} folder.) \\
+\cmd{sudo arpspoof -i IFACE -t PI NODEMCU\_IP} & ARP spoofing. \cmd{-i IFACE} = which network card of the laptop
+to send from; \cmd{-t PI} = the device to fool (the \textbf{target}); \cmd{NODEMCU\_IP} = the address to pretend
+to be. It keeps telling the Pi ``this NodeMCU's address is at \emph{my} network card''. \\
+\cmd{bash attack\_all.sh PI} & run every attack one after another, with pauses, and save the logs. \\
+\cmd{python3 launch.py PI} & a menu: pick one attack by number. \\
+\cmd{./run\_ids.sh admin LAPTOP\_IP} & on the Pi: start our broker and the detector. \cmd{admin LAPTOP\_IP} = the
+operator's laptop: its SSH and dashboard connection are never blocked. \\
+\cmd{\ldots\ | tee lab\_log.txt} & \cmd{|} (a ``pipe'') hands the output of the left command to the right one.
+\cmd{tee} then shows it on the screen \emph{and} writes the same text into \file{lab\_log.txt} (like a T-shaped
+pipe: one input, two outputs). \\
+\cmd{mosquitto\_sub -t ids/alerts -v} & listen to a topic and print every message that arrives (the alert logger
+in \file{attack\_all.sh}). \cmd{-v} = also print the topic name. \\
+\bottomrule
+\end{longtable}
+
+\newpage
+\section{How to read this document}
+
+Every attack has its own card in its family's colour. Each card answers the same questions: what it is, how it
+works, why an attacker does it, what harm it does, how it is usually stopped, and how TinyIDS detects and stops it.
+
+\subsection{Who detects it}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{P{3.6cm}L}
+\toprule
+Badge & Meaning \\
+\midrule
+\MODEL & the LightGBM model (Benign / Flood / Recon), on every window of 10 packets from one sender \\
+\RULE{name} & a simple rule written by us (no machine learning); the name says which one \\
+\KERNEL & Linux itself (SYN cookies, which the start script turns on) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{How well we know it works}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{P{5.0cm}L}
+\toprule
+Badge & Meaning \\
+\midrule
+\LIVE & real attack against the real Pi in the lab (17 November), detected and blocked \\
+\DOCKER & tested in our Docker copy of the testbed (same detector code), not yet on the real Pi \\
+\DATA & never sent on our testbed; the number is how often the model calls the dataset's test rows of it an attack \\
+\NOTEST & the protection exists, but this attack was never tried \\
+\NOTCOV & TinyIDS does not detect it (out of scope, with the reason) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{What TinyIDS does after a detection (the Responder)}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{P{3.8cm}P{4.6cm}L}
+\toprule
+Action & When & What happens \\
+\midrule
+\textbf{Block} & sure attack (confidence $\geq$ 0.90 or a rule) from an outside machine & iptables drops
+\emph{all} its packets for \textbf{30 s} \\
+\textbf{Quarantine} & sure attack from one of \emph{our} NodeMCUs (it is compromised) & the same drop, but for
+\textbf{120 s}; afterwards 30 s of grace so its reconnect does not trigger a new quarantine \\
+\textbf{Rate-limit} & unsure attack (0.70--0.90, and the same sender flagged 2 windows in a row) & only packets above
+\textbf{20 per second} are dropped, for 30 s; becomes a block if a sure alert follows \\
+\textbf{Block MAC + fix ARP} & spoofing (the IP is fake, so blocking the IP is useless) & drop everything from the
+attacker's network card (MAC) for 30 s; for ARP spoofing also write the correct MAC back into the Pi's ARP table \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Every action ends by itself. The admin laptop's SSH session and open dashboard connection always stay open, so the
+IDS can never lock out its own operator. The dashboard can switch blocking off (detect only) or release everything.
+
+% ===============================================================================================================
+\section{All attacks at a glance}
+
+\begin{longtable}{P{4.3cm}P{3.5cm}P{3.1cm}P{3.6cm}}
+\toprule
+Attack & Detected by & Action & Status \\
+\midrule
+\endhead
+\multicolumn{4}{l}{\textcolor{cFlood}{\textbf{Floods (DoS): one sender}}} \\
+SYN flood & model + SYN cookies & block 30 s & live, 0.96 \\
+UDP flood & model & block 30 s & live, 1.00 \\
+ICMP (ping) flood & model & block 30 s & live, 1.00 \\
+ACK flood (TCP flood) & model & block 30 s & live, 0.98 \\
+PSH-ACK flood & model & block 30 s & live, 1.00 \\
+RST-FIN flood & model & block 30 s & live, 1.00 \\
+\multicolumn{4}{l}{\textcolor{cDDoS}{\textbf{Distributed floods (DDoS)}}} \\
+Botnet DDoS (our NodeMCU bots) & model + FloodCounter rule & quarantine 120 s & live, TCP 0.96--0.97, UDP 1.00 \\
+Mirai floods (3 kinds) & model (not trained on) & block / quarantine & dataset: 99.1--99.4\% \\
+SynonymousIP flood & model on dataset rows; see card & see card & dataset: 99.9\% \\
+\multicolumn{4}{l}{\textcolor{cSpoofFlood}{\textbf{Spoofed floods}}} \\
+IP-spoofed flood (fake source IPs) & AddressWatcher rule & block MAC 30 s & Docker \\
+\multicolumn{4}{l}{\textcolor{cFrag}{\textbf{Fragmentation floods}}} \\
+ICMP fragmentation & model (not trained on) & block 30 s & dataset: 97.7\% \\
+UDP fragmentation & model (not trained on) & block / rate-limit & dataset: 66.2\% \\
+ACK fragmentation & model (not trained on) & block / rate-limit & dataset: 43.8\% \\
+\multicolumn{4}{l}{\textcolor{cRecon}{\textbf{Reconnaissance (scans)}}} \\
+Port scan & model + PortScanRule & block 30 s & live, 0.99 / 1.00 \\
+Version / vulnerability scan & model & block 30 s & live (version scan), 0.99 \\
+OS scan & model (named ``Flood'') & block 30 s & live, 0.96 \\
+Ping sweep, host discovery & not detected (too few packets) & -- & not covered \\
+\multicolumn{4}{l}{\textcolor{cBrute}{\textbf{Password attacks}}} \\
+MQTT brute force & BruteForceRule & block 30 s & live, 1.00 \\
+\multicolumn{4}{l}{\textcolor{cARP}{\textbf{Man in the middle}}} \\
+ARP spoofing & AddressWatcher rule & block MAC 30 s + fix ARP & Docker \\
+\multicolumn{4}{l}{\textcolor{cNone}{\textbf{Out of scope}}} \\
+Web attacks, DNS spoofing, HTTP floods, SlowLoris & -- & -- & not covered \\
+\bottomrule
+\end{longtable}
+
+% ===============================================================================================================
+\section{Floods (DoS): one attacker}
+
+\textbf{The idea of every flood:} send so many packets that the victim (or its network link) spends all its time on
+garbage and has nothing left for real work. A \textbf{DoS} (Denial of Service) comes from one sender. The flood types
+differ only in \emph{which} packets are sent, so they hurt different parts of the victim.
+
+\textbf{How TinyIDS sees all of them:} a flood is many tiny, identical packets. In a 10-packet window that shows as
+small and equal sizes (\file{Min}, \file{Max}, \file{Std} near 0) and one flag or protocol in 100\% of the packets.
+The model calls it \textbf{Flood}; the SHAP reasons name the type; the FloodCounter rule counts the senders: one
+sender $\rightarrow$ ``DoS flood''.
+
+\begin{attack}{cFlood}{SYN flood}
+\MODEL\ \KERNEL\ \LIVE
+\fld{What it is}{A stream of TCP SYN packets: ``I want to open a connection'', thousands per second, often from fake
+addresses.}
+\fld{How it works}{For every SYN the victim reserves memory for a half-open connection and waits for the final ACK,
+which never comes. The table of half-open connections fills up, and real clients can no longer connect.}
+\fld{Why attackers do it}{Cheap and classic: one laptop with \texttt{hping3} is enough, and it attacks the place
+every TCP service (MQTT, SSH, web) needs.}
+\fld{Harm}{The broker refuses new connections: sensors that reconnect cannot publish any more; the admin cannot log in.}
+\fld{How it is usually stopped}{SYN cookies (the kernel stops keeping state for half-open connections), rate limits
+on SYNs, firewalls / DDoS protection in front of the server.}
+\fld{How SYN cookies work}{Normally the server writes every SYN into a table and waits. With SYN cookies it
+writes \textbf{nothing}: it hides the connection details (a short code made from the addresses, ports and a secret)
+inside the sequence number of its SYN-ACK reply. A real client sends that number back in its final ACK, so the
+server can rebuild the connection from it. A fake SYN never answers, so it costs the server no memory: the table
+can no longer fill up.}
+\fld{How TinyIDS stops it}{\textbf{Kernel:} SYN cookies are switched on at start, so the Pi survives even before the
+alert. \textbf{Model:} Flood, live confidence \textbf{0.96}, SHAP reasons \file{Min}, \file{Std},
+\file{ack\_flag\_number}. \textbf{Responder:} block the sender for 30 s.}
+\end{attack}
+
+\begin{attack}{cFlood}{UDP flood}
+\MODEL\ \LIVE
+\fld{What it is}{Large numbers of UDP packets to one or many ports.}
+\fld{How it works}{UDP needs no connection, so the attacker just fires. The victim must look at every packet (and
+for closed ports answer with an ICMP error); the Wi-Fi link fills up.}
+\fld{Why attackers do it}{The easiest flood to send and to fake; high volume with no handshake.}
+\fld{Harm}{Bandwidth and CPU are used up: real sensor messages are delayed or lost. A strong enough flood can even
+push a small device off the Wi-Fi.}
+\fld{How it is usually stopped}{Rate limits per source, dropping traffic to unused ports, upstream filtering.}
+\fld{How TinyIDS stops it}{\textbf{Model:} Flood, live \textbf{1.00}, reasons \file{Protocol Type}, \file{Min},
+\file{UDP}. \textbf{Responder:} block 30 s.}
+\end{attack}
+
+\begin{attack}{cFlood}{ICMP (ping) flood}
+\MODEL\ \LIVE
+\fld{What it is}{A storm of ICMP echo requests (``ping'').}
+\fld{How it works}{The victim answers every ping with a reply, so it spends CPU and doubles the traffic on its own
+link.}
+\fld{Why attackers do it}{Works against almost any device (everything answers ping), needs no open port.}
+\fld{Harm}{Slow or unreachable gateway; Wi-Fi airtime wasted.}
+\fld{How it is usually stopped}{Limit or drop ICMP echo from outside, rate-limit ICMP.}
+\fld{How TinyIDS stops it}{\textbf{Model:} Flood, live \textbf{1.00}, reasons \file{ICMP}, \file{Min},
+\file{ack\_flag\_number}. \textbf{Responder:} block 30 s.}
+\end{attack}
+
+\begin{attack}{cFlood}{ACK flood (``TCP flood'' in the dataset)}
+\MODEL\ \LIVE
+\fld{What it is}{TCP packets with only the ACK flag, belonging to no real connection.}
+\fld{How it works}{The victim (and every firewall on the way) must look each packet up in its connection table to
+find out it belongs to nothing. ACK packets also slip past simple ``block new connections'' filters.}
+\fld{Why attackers do it}{Gets past SYN-flood protections and stateless filters.}
+\fld{Harm}{CPU spent on lookups, link filled.}
+\fld{How it is usually stopped}{Stateful firewalls that drop ACKs without a connection, rate limits.}
+\fld{How TinyIDS stops it}{\textbf{Model:} Flood, live \textbf{0.98}, reasons \file{Min}, \file{Max}, \file{Std}
+(all packets the same tiny size). \textbf{Responder:} block 30 s.}
+\end{attack}
+
+\begin{attack}{cFlood}{PSH-ACK flood}
+\MODEL\ \LIVE
+\fld{What it is}{TCP packets with PSH and ACK set: ``here is data, deliver it at once''.}
+\fld{How it works}{The PSH flag tells the receiver to pass the data straight to the application, so even more work
+per packet than an ACK flood.}
+\fld{Why attackers do it}{Looks like normal data traffic, so it is harder to filter by flags.}
+\fld{Harm}{CPU and memory on the victim, link filled.}
+\fld{How it is usually stopped}{Stateful filtering, rate limits.}
+\fld{How TinyIDS stops it}{\textbf{Model:} Flood, live \textbf{1.00}, reasons \file{psh\_flag\_number}, \file{Min},
+\file{Max}. \textbf{Responder:} block 30 s.}
+\end{attack}
+
+\begin{attack}{cFlood}{RST-FIN flood}
+\MODEL\ \LIVE
+\fld{What it is}{TCP packets with RST (reset) and FIN (finish) flags: ``close this connection''.}
+\fld{How it works}{The victim must check every packet against its open connections to decide whether to tear one
+down; a lucky guess can really reset a real connection.}
+\fld{Why attackers do it}{Wastes the victim's lookups and can break real sessions.}
+\fld{Harm}{CPU spent; real connections (a sensor's MQTT session) may be cut.}
+\fld{How it is usually stopped}{Stateful firewalls, sequence-number checks, rate limits.}
+\fld{How TinyIDS stops it}{\textbf{Model:} Flood, live \textbf{1.00}, reasons \file{fin\_flag\_number}, \file{Min},
+\file{rst\_flag\_number}. \textbf{Responder:} block 30 s.}
+\end{attack}
+
+% ===============================================================================================================
+\section{Distributed floods (DDoS)}
+
+\textbf{DDoS} = the same floods, sent by many machines at once (a \emph{botnet}). Each one alone may look small; together
+they are huge, and blocking one sender does not stop the attack.
+
+\begin{attack}{cDDoS}{Botnet DDoS (our 3 NodeMCU bots)}
+\MODEL\ \RULE{FloodCounter}\ \LIVE
+\fld{What it is}{Hacked IoT devices (``bots'') that flood a target on command from the attacker's server. In our
+testbed the 3 NodeMCUs carry bot firmware; the laptop's \file{bot.py} is the command server.}
+\fld{How it works}{The attacker sends one command (``tcp 10''); every bot floods the target at the same time. Our bots
+send UDP to port 5683 or open TCP connections to port 1884 for at most 30 s.}
+\fld{Why attackers do it}{IoT devices are cheap to hack (default passwords, no updates) and there are millions of
+them. Motives: extortion (``pay or we keep you offline''), revenge, hiding another attack, renting the botnet out.}
+\fld{Harm}{Much more traffic than one sender; and the attackers are \emph{our own} devices, which are compromised.}
+\fld{How it is usually stopped}{Upstream DDoS scrubbing, rate limits, and finding and cleaning the infected devices.}
+\fld{How TinyIDS stops it}{\textbf{Model:} Flood for each bot (live: TCP \textbf{0.96--0.97}, UDP \textbf{1.00}),
+reasons \file{syn\_flag\_number}, \file{fin\_flag\_number}, \file{rst\_flag\_number}. \textbf{FloodCounter rule:}
+2 or more senders flooding within 10 s $\rightarrow$ ``DDoS flood (3 senders)''. \textbf{Responder:} the senders are
+our own sensors, so they are \textbf{quarantined for 120 s} (live: all 3 quarantined).}
+\end{attack}
+
+\begin{attack}{cDDoS}{Mirai floods (greeth, greip, udpplain)}
+\MODEL\ \DATA
+\fld{What it is}{Floods sent by \textbf{Mirai}, the famous IoT botnet (2016) that infected cameras and routers through
+default passwords and took large websites offline.}
+\fld{How it works}{\file{greeth} and \file{greip} send GRE-tunnelled packets (Ethernet or IP inside GRE);
+\file{udpplain} is a plain, fast UDP flood.}
+\fld{Why attackers do it}{Ready-made, open-source botnet code; huge numbers of weak IoT devices.}
+\fld{Harm}{Same as a DDoS; plus every infected device is under the attacker's control.}
+\fld{How it is usually stopped}{Change default passwords, update firmware, block telnet from outside, DDoS protection.}
+\fld{How TinyIDS stops it}{Not in training (we cannot run real Mirai), but the floods look like our floods: on the
+dataset's test rows the model calls them attacks \textbf{99.1--99.4\%} of the time $\rightarrow$ block (or
+quarantine if it is one of our sensors). Our bot firmware imitates Mirai's command-and-flood behaviour safely.}
+\end{attack}
+
+\begin{attack}{cDDoS}{SynonymousIP flood}
+\MODEL\ \DATA\ \NOTEST
+\fld{What it is}{A flood label in CICIoT2023 (\file{DDoS-SynonymousIP\_Flood}). It is commonly described as a TCP SYN
+flood whose \emph{fake source address is the victim's own IP address} (like the old ``LAND'' attack). We did not
+check this against the dataset's original packet captures.}
+\fld{How it works}{The victim receives connection requests that seem to come from itself, so it answers itself and can
+get stuck in a loop; with many senders it is also a plain SYN flood.}
+\fld{Why attackers do it}{Confuses devices with weak network stacks; the fake source hides the real sender.}
+\fld{Harm}{Like a SYN flood, plus possible loops or crashes in poorly written IoT firmware.}
+\fld{How it is usually stopped}{Drop packets that claim to come from your own address (Linux does this by default:
+``martian'' source), SYN cookies, anti-spoofing filters at the router.}
+\fld{How TinyIDS stops it}{On the dataset's rows the model calls it an attack \textbf{99.9\%} of the time. Live, the
+detector ignores packets that claim to come from the Pi itself, so the model would not see this exact variant; the
+Linux kernel's own check and the SYN cookies are the protection. If the fake sources are many \emph{different}
+addresses, the AddressWatcher rule (next section) catches it.}
+\end{attack}
+
+% ===============================================================================================================
+\section{Spoofed floods}
+
+\begin{attack}{cSpoofFlood}{IP-spoofed flood (random fake source addresses)}
+\RULE{AddressWatcher}\ \DOCKER
+\fld{What it is}{Any flood (SYN, UDP, ICMP\ldots) where every packet carries a different, made-up source IP
+(\texttt{hping3 --rand-source}).}
+\fld{How it works}{The victim cannot tell who is really sending, and blocking ``the attacker's IP'' is useless: the next
+packet has a new one.}
+\fld{Why attackers do it}{Hide the real sender, defeat per-IP blocking, and make replies hit innocent addresses.}
+\fld{Harm}{Same as the flood type, but harder to stop.}
+\fld{How it is usually stopped}{Anti-spoofing filters at routers (BCP 38 / reverse-path checks), DDoS scrubbing.}
+\fld{How TinyIDS stops it}{The model cannot help (no sender ever fills a 10-packet window, every packet has a new
+address). \textbf{AddressWatcher rule:} one network card (MAC) using \textbf{more than 20 source IPs within 5 s}
+$\rightarrow$ IP spoofing. \textbf{Responder:} the IP is fake, so the \textbf{MAC is blocked} for 30 s. Works inside
+the local network (MAC addresses do not cross routers), which is our case.}
+\end{attack}
+
+% ===============================================================================================================
+\section{Fragmentation floods}
+
+\textbf{Fragmentation:} a packet too big for the network is cut into pieces (fragments) and the receiver puts them
+back together. To do that it must keep the pieces in memory until all have arrived. Fragmentation floods abuse this:
+they send pieces that are expensive to reassemble or never complete.
+
+\textbf{For all three:} not in our training and never tested on our testbed (\texttt{hping3 -f} could send them).
+Common protection: limits on the reassembly memory and time (Linux has them), dropping fragments where they are not
+needed, rate limits.
+
+\begin{attack}{cFrag}{ICMP fragmentation flood}
+\MODEL\ \DATA
+\fld{What it is}{Large ping packets cut into fragments, sent in huge numbers.}
+\fld{How it works}{The victim must buffer and reassemble every fragment set before it can even answer the ping.}
+\fld{Why attackers do it}{More work for the victim per packet than a plain ping flood.}
+\fld{Harm}{Memory for reassembly fills up, CPU wasted, link filled.}
+\fld{How TinyIDS stops it}{It looks very much like an ICMP flood: the model calls the dataset's rows an attack
+\textbf{97.7\%} of the time $\rightarrow$ block 30 s.}
+\end{attack}
+
+\begin{attack}{cFrag}{UDP fragmentation flood}
+\MODEL\ \DATA
+\fld{What it is}{Large UDP packets sent as fragments.}
+\fld{How it works}{Same reassembly work; the fragments carry no UDP header after the first piece, so port-based
+filters cannot judge them.}
+\fld{Why attackers do it}{Bypasses port filters; consumes reassembly memory.}
+\fld{Harm}{Memory and bandwidth.}
+\fld{How TinyIDS stops it}{Partly: the model flags the dataset's rows \textbf{66.2\%} of the time (block, or
+rate-limit when unsure). Its fragments look less like our UDP floods than the ICMP ones do.}
+\end{attack}
+
+\begin{attack}{cFrag}{ACK fragmentation flood}
+\MODEL\ \DATA
+\fld{What it is}{TCP ACK packets cut into fragments.}
+\fld{How it works}{Combines the ACK flood (connection-table lookups) with reassembly work; the pieces are big, so few
+packets fill the link.}
+\fld{Why attackers do it}{High bandwidth with few packets; passes simple flag filters.}
+\fld{Harm}{Bandwidth and memory.}
+\fld{How TinyIDS stops it}{Weakly: the model flags the dataset's rows only \textbf{43.8\%} of the time. A known gap: to
+cover it, record it with \texttt{hping3 -A -f} and add it to training.}
+\end{attack}
+
+% ===============================================================================================================
+\section{Reconnaissance (scans)}
+
+\textbf{Reconnaissance} is the attacker looking around before the real attack: which devices exist, which ports are
+open, which software and versions run. It does no damage by itself, but it is usually the \emph{first step}, so
+catching it early stops the attack before it starts.
+
+\begin{attack}{cRecon}{Port scan}
+\MODEL\ \RULE{PortScanRule}\ \LIVE
+\fld{What it is}{Trying many ports of the target to see which are open (\texttt{nmap}).}
+\fld{How it works}{A SYN is sent to port after port; an answer means ``open''. Fast and quiet: no full connection.}
+\fld{Why attackers do it}{To find a door: an open MQTT broker, SSH, a forgotten web panel.}
+\fld{Harm}{None directly; it reveals what to attack next.}
+\fld{How it is usually stopped}{Firewall all unused ports, scan detection in IDSs, rate limits.}
+\fld{How TinyIDS stops it}{\textbf{Model:} Recon, live \textbf{0.99}, reasons \file{AVG}, \file{Tot size},
+\file{Max}. \textbf{PortScanRule:} one sender touching \textbf{more than 20 ports within 5 s} $\rightarrow$ Recon
+(live \textbf{1.00}). Both fired. \textbf{Responder:} block 30 s, so the scan sees nothing more.}
+\end{attack}
+
+\begin{attack}{cRecon}{Version / vulnerability scan}
+\MODEL\ \LIVE
+\fld{What it is}{After finding open ports, asking each service what software and version it runs
+(\texttt{nmap -sV}), or testing known weaknesses.}
+\fld{How it works}{Sends probes that make services reveal their name and version, then compares with lists of known
+vulnerabilities.}
+\fld{Why attackers do it}{To pick an exploit that works on exactly this version.}
+\fld{Harm}{Reveals weaknesses; some probes can crash fragile devices.}
+\fld{How it is usually stopped}{Hide version banners, keep software updated, IDS scan detection.}
+\fld{How TinyIDS stops it}{\textbf{Model:} Recon, live \textbf{0.99} on our version scan (reasons \file{AVG},
+\file{Tot size}, \file{Max}) $\rightarrow$ block 30 s. On the dataset's vulnerability-scan rows the model is weaker
+(36\% flagged).}
+\end{attack}
+
+\begin{attack}{cRecon}{OS scan}
+\MODEL\ \LIVE
+\fld{What it is}{Guessing the target's operating system from small details of how it answers odd packets
+(\texttt{nmap -O}).}
+\fld{How it works}{Unusual flag combinations and probes; every OS answers slightly differently.}
+\fld{Why attackers do it}{Knowing ``Linux on a Raspberry Pi'' tells them which exploits to try.}
+\fld{Harm}{Reveals information; no damage by itself.}
+\fld{How it is usually stopped}{Firewalls that drop odd probes, IDS scan detection.}
+\fld{How TinyIDS stops it}{Live: the model called it \textbf{Flood} (0.96, reasons \file{Min}, \file{Std},
+\file{syn\_flag\_number}): the wrong name, because its probes look like a small SYN flood, but it was
+\textbf{blocked at once}. On the dataset's OS-scan rows the model is weak (25\% flagged).}
+\end{attack}
+
+\begin{attack}{cNone}{Ping sweep and host discovery}
+\NOTCOV
+\fld{What it is}{Finding which devices are on the network by pinging every address.}
+\fld{Why it is not covered}{Each device receives only one or two packets, so no sender ever sends the Pi the 10
+packets a window needs: the model never sees it. It only learns that the Pi exists, which is not secret on a shared
+Wi-Fi.}
+\end{attack}
+
+% ===============================================================================================================
+\section{Password attacks}
+
+\begin{attack}{cBrute}{MQTT brute force}
+\RULE{BruteForceRule}\ \LIVE
+\fld{What it is}{Trying password after password on the MQTT broker (\texttt{mosquitto\_pub} with wrong passwords).}
+\fld{How it works}{Each try is a CONNECT; the broker answers with a CONNACK that says ``refused''. The attacker keeps
+going until one is accepted.}
+\fld{Why attackers do it}{With the broker password they can read every sensor value and \emph{publish fake ones}, or
+send commands to devices.}
+\fld{Harm}{Full control of the IoT messages: fake readings, hidden real alarms, commands to actuators.}
+\fld{How it is usually stopped}{Strong passwords, lockout after failed logins, TLS client certificates.}
+\fld{How TinyIDS stops it}{The model cannot see it (a login is a normal-looking packet). \textbf{BruteForceRule:}
+the detector reads the broker's answers; \textbf{5 refused logins within 10 s} from one client $\rightarrow$
+BruteForce (live \textbf{1.00}). \textbf{Responder:} block 30 s.}
+\end{attack}
+
+% ===============================================================================================================
+\section{Man in the middle}
+
+\begin{attack}{cARP}{ARP spoofing}
+\RULE{AddressWatcher}\ \DOCKER
+\fld{What it is}{The attacker tells the network ``the Pi's address belongs to \emph{my} network card''
+(\texttt{arpspoof}), so traffic meant for one device goes to the attacker.}
+\fld{How it works}{Devices find each other's network card with ARP and trust any answer. Fake ARP answers poison their
+tables.}
+\fld{Why attackers do it}{To sit in the middle: read every sensor message, change them in flight, or drop them.}
+\fld{Harm}{Spying, fake data, cut-off devices; the victims notice nothing.}
+\fld{How it is usually stopped}{Static ARP entries for important devices, ``dynamic ARP inspection'' on managed
+switches, encryption (TLS) so stolen traffic is useless.}
+\fld{How TinyIDS stops it}{\textbf{AddressWatcher rule:} it remembers which MAC owns which IP; an ARP message that
+gives a known IP a \emph{different} MAC $\rightarrow$ ARP spoofing. \textbf{Responder:} block the attacker's MAC for
+30 s and \textbf{write the correct MAC back} into the Pi's ARP table. Tested in Docker; not yet on the real Pi.}
+\end{attack}
+
+% ===============================================================================================================
+\section{Not covered, and why}
+
+\begin{attack}{cNone}{Web attacks (SQL injection, XSS, command injection, backdoor, browser hijacking, uploading)}
+\NOTCOV
+\fld{What they are}{Attacks on web applications: bad input that makes a website run the attacker's code or queries.}
+\fld{Why not covered}{The Pi runs no web server, so there is nothing to attack and nothing to test. Their packets also
+look like normal traffic in our 14 features (model: 0--5\% on the dataset's rows).}
+\end{attack}
+
+\begin{attack}{cNone}{DNS spoofing}
+\NOTCOV
+\fld{What it is}{Fake answers to name lookups, sending a device to the attacker's server.}
+\fld{Why not covered}{Our devices use fixed IP addresses (no lookups); the model flags the dataset's rows only 15\%.}
+\end{attack}
+
+\begin{attack}{cNone}{HTTP floods and SlowLoris}
+\NOTCOV
+\fld{What they are}{Floods of web requests, or (SlowLoris) many web connections kept open by sending a request very
+slowly.}
+\fld{Why not covered}{They need a web server to attack; the Pi has none. (The model still flags 40--61\% of the
+dataset's HTTP-flood rows.)}
+\end{attack}
+
+% ===============================================================================================================
+\section{The layers of defence, in one table}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{P{3.6cm}P{4.6cm}L}
+\toprule
+Layer & What it does & Against \\
+\midrule
+Linux kernel & SYN cookies; drops packets claiming the Pi's own address & SYN floods, SynonymousIP-style floods \\
+Model (LightGBM) & judges the shape of every 10-packet window & all floods, scans, DDoS (per sender) \\
+FloodCounter & counts flooding senders & DoS vs DDoS \\
+PortScanRule & counts ports per sender & fast port scans \\
+BruteForceRule & counts refused MQTT logins & password guessing \\
+AddressWatcher & checks IP $\leftrightarrow$ MAC & ARP spoofing, spoofed-source floods \\
+Responder (iptables) & block / quarantine / rate-limit / MAC block, all time-limited & everything detected above \\
+Dashboard & shows every alert with its reasons; IPS on/off, release all & the human in the loop \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\end{document}

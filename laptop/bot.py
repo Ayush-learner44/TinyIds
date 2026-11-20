@@ -29,13 +29,14 @@ def my_ip():
         s.close()
 
 
-def send_to_bots(kind, seconds=10):
+def send_to_bots(kind, seconds=10, bot_ips=()):
     command = "stop" if kind == "stop" else f"{kind} {seconds}"
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     s.bind((my_ip(), 0))                       # send on the Wi-Fi card, not on a Docker/VPN card
-    s.sendto(command.encode(), ("255.255.255.255", BOT_PORT))
-    print(f"broadcast to all bots: '{command}'")
+    for target in bot_ips or ["255.255.255.255"]:   # given IPs: one packet to each bot (when Wi-Fi blocks broadcast)
+        s.sendto(command.encode(), (target, BOT_PORT))
+    print(f"sent to {', '.join(bot_ips) if bot_ips else 'all bots (broadcast)'}: '{command}'")
 
     s.settimeout(0.5)                          # show the bots' answers ("node1: udp flood started ...")
     end = time.time() + (2 if kind == "stop" else seconds + 3)
@@ -54,5 +55,5 @@ def send_to_bots(kind, seconds=10):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or sys.argv[1] not in ("udp", "tcp", "stop"):
-        raise SystemExit("use:  python bot.py udp|tcp|stop [seconds]")
-    send_to_bots(sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 10)
+        raise SystemExit("use:  python bot.py udp|tcp|stop [seconds] [bot IPs ...]")
+    send_to_bots(sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 10, sys.argv[3:])

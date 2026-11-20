@@ -319,3 +319,29 @@ for "attack" moves.
 - **RQ1:** "For 34 attack types about 30 features are needed to stay within 2%; for our gateway's job (benign / flood /
   recon) a small set of ~10 matching features is enough."
 - **Limitation:** "The model only judges senders that fill a window; slow traffic is handled by rules."
+
+---
+
+## 14. How much data the new model used, and what validation is for (17 Nov)
+
+**1. How much data did we train on?**
+- Our dataset copy isn't the full 46 million rows. It's a split version: `train.csv` with about **5.5 million** rows,
+  `validation.csv` with 1.18 million, `test.csv` with 1.18 million.
+- From `train.csv` we kept only Benign, Flood and Recon rows and took **20%** of them: about **909,000 rows**. Then we
+  added **29,161 of our own** rows. Training total: **938,529 rows**.
+- Validation: 20% of `validation.csv` plus 15% of ours = 201,248 rows. Test: all kept rows of `test.csv` (973,829)
+  plus 15% of ours (6,137).
+
+**2. Our own recorded data: where is it, and how much benign?**
+- It's in `training/data/` (one CSV per recording, e.g. `benign.csv`, `flood_syn.csv`, `flood_bots_tcp_1.csv`).
+- Benign rows we created: **about 1,300** in total. 1,040 come from the 30-min recording of the 10 Docker sensors, and
+  about 260 are sensor rows inside the attack files. Split 70/15/15, so the test had 188 of them.
+- All of it is from **Docker sensors (Python), none from real NodeMCUs**. That's why the real NodeMCUs looked strange
+  to the model (17 Nov lab).
+
+**3. What the validation set is for**
+- **Train** = the model learns from it.
+- **Validation** = while training, after each new tree, LightGBM checks the score on validation and **stops adding
+  trees when it stops improving** (early stopping). It's also used to pick settings. The model never learns from it
+  directly.
+- **Test** = touched only once at the end, for the honest final score.

@@ -76,6 +76,8 @@ class TinyIDS:
         current = self.responder.active.get(sender)
         if current and current["action"] != "rate_limit":   # already blocked / quarantined: handled. (Its retries
             return                                           # would only look like a scan and spam "Recon" alerts.)
+        if self.responder.grace.get(sender, 0) > time.time():  # a sensor just released from quarantine: 30 s grace
+            return
         size = len(packets)
         row = self.builder.build(packets)                                   # 1. packets -> the model's features
         detection, model_ms = self.detector.check(sender, row)              # 2. one model: Benign / Flood / Recon
@@ -124,6 +126,9 @@ class TinyIDS:
         return router_ip, (mac if mac and mac != "ff:ff:ff:ff:ff:ff" else None)
 
     def handle_portscan(self, sender, ports):
+        current = self.responder.active.get(sender)
+        if current and current["action"] != "rate_limit":   # already blocked: nmap keeps retrying the remaining
+            return                                           # ports for minutes; one alert is enough
         if not self.alert_filter.not_too_soon(sender, "Recon"):
             return
         reasons = [["different ports", ports, 0.0], ["within seconds", self.settings.scan_seconds, 0.0],
@@ -185,6 +190,7 @@ class TinyIDS:
                     self.responder.release_expired()
                     self.budget.clear()
                     stats, ips_status = self.stats.message(), self.responder.status()
+                    stats["sensor_ips"] = {name: ip for ip, name in self.sensors.name_of.items()}   # for the dashboard
                 self.publisher.send_stats(stats)
                 self.publisher.send_mitigation_status(ips_status)
             except Exception:

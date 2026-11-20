@@ -1,72 +1,72 @@
-trained 2026-11-16
-train 938,529 rows (ours 29,161) | validation 201,248 | dataset test 973,829 | our test 6,137
-our rows per class: {'Flood': 40300, 'Benign': 1300, 'Recon': 109}
+trained 2026-11-17
+train 945,623 rows (ours 36,255) | validation 202,754 | dataset test 973,829 | our test 7,671
+our rows per class: {'Flood': 47852, 'Benign': 3747, 'Recon': 244}
 
 Feature ranking (mean |SHAP|, gain):
-   1. Max              SHAP 15.451   gain 741,397
-   2. Tot size         SHAP 11.989   gain 1,331,044
-   3. Protocol Type    SHAP 4.574   gain 340,842
-   4. Min              SHAP 3.523   gain 81,792
-   5. Std              SHAP 3.150   gain 1,158,798
-   6. AVG              SHAP 2.445   gain 1,282,429
-   7. ICMP             SHAP 0.765   gain 9,996
-   8. ack_flag_number  SHAP 0.711   gain 164,781
-   9. TCP              SHAP 0.435   gain 23,143
-  10. fin_flag_number  SHAP 0.430   gain 27,997
-  11. psh_flag_number  SHAP 0.426   gain 26,917
-  12. rst_flag_number  SHAP 0.378   gain 126,943
-  13. syn_flag_number  SHAP 0.276   gain 64,920
-  14. UDP              SHAP 0.154   gain 5,369
+   1. AVG              SHAP 1.206   gain 2,075,684
+   2. Max              SHAP 1.073   gain 189,421
+   3. Tot size         SHAP 0.812   gain 1,181,577
+   4. ICMP             SHAP 0.741   gain 9,845
+   5. Std              SHAP 0.732   gain 95,393
+   6. Protocol Type    SHAP 0.731   gain 516,056
+   7. Min              SHAP 0.698   gain 83,782
+   8. ack_flag_number  SHAP 0.595   gain 166,259
+   9. psh_flag_number  SHAP 0.584   gain 43,948
+  10. TCP              SHAP 0.312   gain 23,340
+  11. fin_flag_number  SHAP 0.304   gain 23,544
+  12. rst_flag_number  SHAP 0.273   gain 120,128
+  13. syn_flag_number  SHAP 0.220   gain 78,231
+  14. UDP              SHAP 0.140   gain 3,447
 
 k  | dataset test macro-F1 | our test macro-F1 | our benign rows flagged | size KB
-5  | 0.7160                | 0.9573            | 0 of 188                | 976
-  features: Max, Tot size, Protocol Type, Min, Std
+5  | 0.6460                | 0.9064            | 0 of 567                | 973
+  features: AVG, Max, Tot size, ICMP, Std
   our test rows:
               precision    recall  f1-score   support
 
-      Benign      0.825     1.000     0.904       188
-       Flood      1.000     0.993     0.997      5932
-       Recon      0.944     1.000     0.971        17
+      Benign      0.947     1.000     0.973       567
+       Flood      0.998     0.995     0.997      7065
+       Recon      0.818     0.692     0.750        39
 
-    accuracy                          0.993      6137
-   macro avg      0.923     0.998     0.957      6137
-weighted avg      0.994     0.993     0.994      6137
+    accuracy                          0.994      7671
+   macro avg      0.921     0.896     0.906      7671
+weighted avg      0.994     0.994     0.994      7671
 
-7  | 0.7248                | 0.9573            | 0 of 188                | 976
-  features: Max, Tot size, Protocol Type, Min, Std, AVG, ICMP
+7  | 0.7220                | 0.9564            | 0 of 567                | 976
+  features: AVG, Max, Tot size, ICMP, Std, Protocol Type, Min
   our test rows:
               precision    recall  f1-score   support
 
-      Benign      0.825     1.000     0.904       188
-       Flood      1.000     0.993     0.997      5932
-       Recon      0.944     1.000     0.971        17
+      Benign      0.950     1.000     0.974       567
+       Flood      1.000     0.995     0.997      7065
+       Recon      0.897     0.897     0.897        39
 
-    accuracy                          0.993      6137
-   macro avg      0.923     0.998     0.957      6137
-weighted avg      0.994     0.993     0.994      6137
+    accuracy                          0.995      7671
+   macro avg      0.949     0.964     0.956      7671
+weighted avg      0.995     0.995     0.995      7671
 
-10 | 0.7430                | 0.9573            | 0 of 188                | 973
-  features: Max, Tot size, Protocol Type, Min, Std, AVG, ICMP, ack_flag_number, TCP, fin_flag_number
+10 | 0.7541                | 0.6990            | 0 of 567                | 973
+  features: AVG, Max, Tot size, ICMP, Std, Protocol Type, Min, ack_flag_number, psh_flag_number, TCP
   our test rows:
               precision    recall  f1-score   support
 
-      Benign      0.825     1.000     0.904       188
-       Flood      1.000     0.993     0.997      5932
-       Recon      0.944     1.000     0.971        17
+      Benign      0.953     1.000     0.976       567
+       Flood      1.000     0.941     0.970      7065
+       Recon      0.083     0.897     0.152        39
 
-    accuracy                          0.993      6137
-   macro avg      0.923     0.998     0.957      6137
-weighted avg      0.994     0.993     0.994      6137
+    accuracy                          0.945      7671
+   macro avg      0.678     0.946     0.699      7671
+weighted avg      0.991     0.945     0.966      7671
 
-14 | 0.7632                | 0.9904            | 0 of 188                | 974
-  features: Max, Tot size, Protocol Type, Min, Std, AVG, ICMP, ack_flag_number, TCP, fin_flag_number, psh_flag_number, rst_flag_number, syn_flag_number, UDP
+14 | 0.7598                | 0.9569            | 1 of 567                | 974
+  features: AVG, Max, Tot size, ICMP, Std, Protocol Type, Min, ack_flag_number, psh_flag_number, TCP, fin_flag_number, rst_flag_number, syn_flag_number, UDP
   our test rows:
               precision    recall  f1-score   support
 
-      Benign      1.000     1.000     1.000       188
-       Flood      1.000     1.000     1.000      5932
-       Recon      0.944     1.000     0.971        17
+      Benign      0.995     0.998     0.996       567
+       Flood      0.999     0.999     0.999      7065
+       Recon      0.854     0.897     0.875        39
 
-    accuracy                          1.000      6137
-   macro avg      0.981     1.000     0.990      6137
-weighted avg      1.000     1.000     1.000      6137
+    accuracy                          0.998      7671
+   macro avg      0.949     0.965     0.957      7671
+weighted avg      0.998     0.998     0.998      7671

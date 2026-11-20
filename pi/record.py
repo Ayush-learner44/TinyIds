@@ -40,8 +40,10 @@ def main(words):
 
     out = open(file_name, "w", newline="")
     writer = csv.writer(out)
-    writer.writerow(["time", "src"] + COLUMNS)
-    count = {"rows": 0, "last_cleanup": time.time()}
+    writer.writerow(["time", "src"] + COLUMNS + ["pps"])     # pps: recorded for the report, NOT used in training
+    start = time.time()
+    count = {"rows": 0, "last_cleanup": start, "last_print": start}
+    per_sender = {}
 
     def on_packet(packet):
         now = time.time()
@@ -49,18 +51,30 @@ def main(words):
             windows.drop_old()
             flows.forget_old(now)
             count["last_cleanup"] = now
+        if now - count["last_print"] >= 30:            # every 30 s: show that it is working
+            count["last_print"] = now
+            print(f"  {int(now - start) // 60} min {int(now - start) % 60:02d} s: {count['rows']} rows so far  "
+                  f"{per_sender}", flush=True)
         info = reader.read(packet)
         if info is None:
             return
         for sender, packets in windows.add(info):
             row = FeatureBuilder.values(packets)
-            writer.writerow([round(now, 3), sender] + [round(float(row[c]), 4) for c in COLUMNS])
+            span = packets[-1].time - packets[0].time              # seconds from the 1st to the 10th packet
+            pps = round(len(packets) / span, 2) if span > 0 else 0.0   # packets per second of this window
+            writer.writerow([round(now, 3), sender] + [round(float(row[c]), 4) for c in COLUMNS] + [pps])
+            out.flush()                                # every row is on disk at once (Ctrl+C loses nothing)
             count["rows"] += 1
+            per_sender[sender] = per_sender.get(sender, 0) + 1
 
-    print(f"recording {interface} ({my_ip}) for {seconds} s into {file_name} ...", flush=True)
-    sniff(iface=interface, filter=capture, prn=on_packet, store=False, timeout=seconds)
+    print(f"recording {interface} ({my_ip}) for {seconds} s into {file_name} (a line every 30 s; Ctrl+C = stop early, "
+          f"everything recorded so far is kept) ...", flush=True)
+    try:
+        sniff(iface=interface, filter=capture, prn=on_packet, store=False, timeout=seconds)
+    except KeyboardInterrupt:
+        print("stopped early with Ctrl+C", flush=True)
     out.close()
-    print(f"done: {count['rows']} rows", flush=True)
+    print(f"done: {count['rows']} rows in {file_name}  {per_sender}", flush=True)
 
 
 if __name__ == "__main__":

@@ -116,7 +116,8 @@ def live():
     with right:
         st.subheader("Sensors")
         if sensors:
-            rows = [{"node": k, "temp (C)": v.get("temp_c"), "humidity (%)": v.get("humidity"),
+            ips = last.get("sensor_ips", {})       # learned by the IDS from the MQTT packets, not sent by the sensors
+            rows = [{"node": k, "IP": ips.get(k, "?"), "temp (C)": v.get("temp_c"), "humidity (%)": v.get("humidity"),
                      "last seen (s ago)": round(time.time() - v["seen"], 1)} for k, v in sorted(sensors.items())]
             st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
         else:

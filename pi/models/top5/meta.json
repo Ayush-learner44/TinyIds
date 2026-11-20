@@ -1,12 +1,12 @@
 {
   "features": [
+    "AVG",
     "Max",
     "Tot size",
-    "Protocol Type",
-    "Min",
+    "ICMP",
     "Std"
   ],
-  "trained": "2026-11-16",
+  "trained": "2026-11-17",
   "model": {
     "file": "model.txt",
     "classes": [
@@ -14,9 +14,9 @@
       "Flood",
       "Recon"
     ],
-    "rounds": 190,
-    "size_kb": 975.6,
-    "dataset_test_macro_f1": 0.716,
-    "our_test_macro_f1": 0.9573
+    "rounds": 189,
+    "size_kb": 972.7,
+    "dataset_test_macro_f1": 0.646,
+    "our_test_macro_f1": 0.9064
   }
 }

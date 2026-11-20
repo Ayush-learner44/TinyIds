@@ -1,3 +1,40 @@
+# Python
 __pycache__/
 *.pyc
 .venv/
+venv/
+.ipynb_checkpoints/
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Large or generated data (GitHub limit: 100 MB per file).
+# Regenerate with train_model14.ipynb (needs CICIoT2023 as parquet in cache/).
+evaluation_matrices/dataset/*.csv
+cache/
+notebook_output/
+
+# Archives
+*.zip
+
+# LaTeX build files (the .tex and .pdf are kept)
+*.aux
+*.log
+*.toc
+*.out
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+
+# Lab and run logs
+laptop/attack_log_*.txt
+laptop/dashboard_alerts_*.txt
+lab_log*.txt
+docker_ids_log*.txt
+
+# Personal / local notes
+resume.txt
+ppts/reference/
